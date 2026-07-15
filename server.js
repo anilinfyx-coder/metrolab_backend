@@ -46,8 +46,9 @@ app.use('/api/WaitingList', waitingListRouter);
 app.use('/api/WaitingTestLabTest', crudRoutes('waiting_test_lab_test'));
 app.use('/api/SpecimenType', crudRoutes('specimen_type'));
 app.use('/api/SpecimenTypeDrugLinking', specimenTypeDrugLinkingRouter);  // Custom route: handles lab_test_id + JOINs
-app.use('/api/LabTestCategoryReport', crudRoutes('lab_test_category_report'));
+app.use('/api/LabTestCategoryReport', require('./routes/labTestCategoryReport'));
 app.use('/api/ReportQuestions', crudRoutes('report_questions'));
+app.use('/api/TestRequest', require('./routes/testRequestBulk'));
 app.use('/api/ReportRequestParameters', crudRoutes('report_request_parameters'));
 app.use('/api/Country', crudRoutes('country'));
 app.use('/api/State', crudRoutes('state'));
@@ -57,6 +58,9 @@ app.use('/api/Region', crudRoutes('region'));
 app.use('/api/RoleTypes', crudRoutes('role_types'));
 app.use('/api/ActionNames', crudRoutes('action_names'));
 app.use('/api/TypeData', crudRoutes('document_type'));
+app.use('/api/ServiceType', crudRoutes('service_type'));
+app.use('/api/MedicalOfficer', crudRoutes('medical_officer'));
+app.use('/api/CovidDescription', crudRoutes('covid_description'));
 
 // ── Health Check ─────────────────────────────────────────────
 app.get('/health', async (req, res) => {
