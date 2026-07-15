@@ -10,19 +10,21 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
 // ── Core Routes ──────────────────────────────────────────────
-const adminUsersRouter = require('./routes/adminUsers');
-const superAdminRouter = require('./routes/superAdmin');
-const patientRouter = require('./routes/patient');
-const labTestsRouter = require('./routes/labTests');
-const b2bClientsRouter = require('./routes/b2bClients');
-const corporateClientsRouter = require('./routes/corporateClients');
+const authRouter             = require('./routes/auth');
+const adminUsersRouter       = require('./routes/adminUsers');
+const superAdminRouter       = require('./routes/superAdmin');
+const patientRouter          = require('./routes/patient');
+const labTestsRouter         = require('./routes/labTests');
+const b2bClientsRouter            = require('./routes/b2bClients');
+const corporateClientsRouter      = require('./routes/corporateClients');
 const b2bClientSubscriptionRouter = require('./routes/b2bClientSubscription');
-const b2bClientLabTestAccessRouter = require('./routes/b2bClientLabTestAccess');
-const { crudRoutes } = require('./routes/crud');
-const waitingListRouter = require('./routes/waitingList');
-const specimenTypeDrugLinkingRouter = require('./routes/specimenTypeDrugLinking');
+const b2bClientLabTestAccessRouter= require('./routes/b2bClientLabTestAccess');
+const { crudRoutes }              = require('./routes/crud');
+const waitingListRouter                = require('./routes/waitingList');
+const specimenTypeDrugLinkingRouter    = require('./routes/specimenTypeDrugLinking');
 
-app.use('/api/AdminUsers', adminUsersRouter);
+app.use('/api/Auth',             authRouter);
+app.use('/api/AdminUsers',       adminUsersRouter);
 app.use('/api/SuperAdmin', superAdminRouter);
 app.use('/api/Patient', patientRouter);
 app.use('/api/LabTests', labTestsRouter);
