@@ -26,7 +26,7 @@ router.post('/login', async (req, res) => {
         } else {
             isMatch = (password === client.password);
         }
-        
+
         if (!isMatch) return resp(res, '401', 'Invalid credentials');
 
         const token = jwt.sign(
@@ -116,13 +116,13 @@ router.post('/', async (req, res) => {
                 $37,$38,true,false
             ) RETURNING *`,
             [role_id, company_name, contact_person_name, mobile, public_phone_no,
-             email, public_email, public_fax, address, country_id, state_id, city_id,
-             district_id, region_id, pincode, support_mobile, support_email, support_person_name,
-             password, tagline, logo_file, report_header_file, report_footer_file,
-             primary_color_code, website, medical_officer_name, mrocc, clia_number,
-             medical_officer_position, medical_officer_signature_file_name,
-             is_approval, approval_note, smtp_server, smtp_port, smtp_email, smtp_password,
-             user_id, role_type_id]
+                email, public_email, public_fax, address, country_id, state_id, city_id,
+                district_id, region_id, pincode, support_mobile, support_email, support_person_name,
+                password, tagline, logo_file, report_header_file, report_footer_file,
+                primary_color_code, website, medical_officer_name, mrocc, clia_number,
+                medical_officer_position, medical_officer_signature_file_name,
+                is_approval, approval_note, smtp_server, smtp_port, smtp_email, smtp_password,
+                user_id, role_type_id]
         );
         return resp(res, '200', row);
     } catch (err) { return resp(res, '500', err.message); }
