@@ -53,13 +53,37 @@ router.get('/', async (req, res) => {
     } catch (err) { return resp(res, '500', err.message); }
 });
 
-// ── GET /api/B2bClients/:id ───────────────────────────────────
-router.get('/:id', async (req, res) => {
+// ── POST /api/B2bClients/changePassword ───────────────────────
+router.post('/changePassword', async (req, res) => {
     try {
-        const row = await queryOne(`SELECT * FROM b2b_clients WHERE id = $1 LIMIT 1`, [req.params.id]);
-        if (!row) return resp(res, '404', 'B2B Client not found');
-        return resp(res, '200', row);
-    } catch (err) { return resp(res, '500', err.message); }
+        const { userId, oldPassword, newPassword } = req.body;
+        if (!userId || !oldPassword || !newPassword) {
+            return resp(res, '400', 'userId, oldPassword and newPassword are required');
+        }
+        if (String(newPassword).length < 6) {
+            return resp(res, '400', 'New password must be at least 6 characters');
+        }
+        if (/[^a-zA-Z0-9@#]/.test(String(newPassword))) {
+            return resp(res, '400', 'Only @ # are allowed as special characters');
+        }
+
+        const client = await queryOne(`SELECT * FROM b2b_clients WHERE id = $1 AND deleted = false LIMIT 1`, [userId]);
+        if (!client) return resp(res, '404', 'B2B Client not found');
+
+        let isMatch = false;
+        if (client.password && (client.password.startsWith('$2a$') || client.password.startsWith('$2b$'))) {
+            isMatch = await bcrypt.compare(oldPassword, client.password);
+        } else {
+            isMatch = (oldPassword === client.password);
+        }
+        if (!isMatch) return resp(res, '401', 'Old password is incorrect');
+
+        const hashed = await bcrypt.hash(newPassword, 10);
+        await query(`UPDATE b2b_clients SET password = $1 WHERE id = $2`, [hashed, userId]);
+        return resp(res, '200', 'Password changed successfully');
+    } catch (err) {
+        return resp(res, '500', err.message);
+    }
 });
 
 // ── POST /api/B2bClients ──────────────────────────────────────
@@ -104,23 +128,67 @@ router.post('/', async (req, res) => {
     } catch (err) { return resp(res, '500', err.message); }
 });
 
+// ── GET /api/B2bClients/:id ───────────────────────────────────
+router.get('/:id', async (req, res) => {
+    try {
+        const row = await queryOne(
+            `SELECT id, role_id, company_name, contact_person_name, mobile, public_phone_no,
+                    email, public_email, public_fax, address, support_mobile, support_email,
+                    support_person_name, tagline, primary_color_code, website,
+                    smtp_server, smtp_port, smtp_email, smtp_password, status, deleted
+             FROM b2b_clients WHERE id = $1 LIMIT 1`,
+            [req.params.id]
+        );
+        if (!row) return resp(res, '404', 'B2B Client not found');
+        return resp(res, '200', row);
+    } catch (err) { return resp(res, '500', err.message); }
+});
+
 // ── PUT /api/B2bClients/:id ───────────────────────────────────
 router.put('/:id', async (req, res) => {
     try {
-        const { company_name, contact_person_name, mobile, email, address, status, is_approval, password } = req.body;
+        const body = req.body || {};
+        const fields = [
+            'company_name', 'contact_person_name', 'mobile', 'email', 'address',
+            'public_phone_no', 'public_email', 'public_fax',
+            'support_person_name', 'support_mobile', 'support_email',
+            'tagline', 'primary_color_code', 'website',
+            'smtp_server', 'smtp_port', 'smtp_email', 'smtp_password',
+            'status', 'is_approval',
+        ];
+
+        const updates = [];
+        const values = [];
+        let idx = 1;
+
+        for (const key of fields) {
+            if (Object.prototype.hasOwnProperty.call(body, key) && body[key] !== undefined) {
+                updates.push(`${key} = $${idx++}`);
+                values.push(body[key]);
+            }
+        }
+
+        if (body.password) {
+            const nextPassword = (String(body.password).startsWith('$2a$') || String(body.password).startsWith('$2b$'))
+                ? body.password
+                : await bcrypt.hash(body.password, 10);
+            updates.push(`password = $${idx++}`);
+            values.push(nextPassword);
+        }
+
+        if (updates.length === 0) return resp(res, '400', 'No fields to update');
+
+        values.push(req.params.id);
         const row = await queryOne(
-            `UPDATE b2b_clients SET
-                company_name = COALESCE($1, company_name),
-                contact_person_name = COALESCE($2, contact_person_name),
-                mobile = COALESCE($3, mobile),
-                email = COALESCE($4, email),
-                address = COALESCE($5, address),
-                status = COALESCE($6, status),
-                is_approval = COALESCE($7, is_approval),
-                password = COALESCE($8, password)
-             WHERE id = $9 RETURNING *`,
-            [company_name, contact_person_name, mobile, email, address, status, is_approval, password || null, req.params.id]
+            `UPDATE b2b_clients SET ${updates.join(', ')}
+             WHERE id = $${idx}
+             RETURNING id, role_id, company_name, contact_person_name, mobile, public_phone_no,
+                       email, public_email, public_fax, address, support_mobile, support_email,
+                       support_person_name, tagline, primary_color_code, website,
+                       smtp_server, smtp_port, smtp_email, smtp_password, status, deleted`,
+            values
         );
+        if (!row) return resp(res, '404', 'B2B Client not found');
         return resp(res, '200', row);
     } catch (err) { return resp(res, '500', err.message); }
 });

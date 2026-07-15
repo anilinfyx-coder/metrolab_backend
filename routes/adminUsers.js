@@ -58,9 +58,16 @@ router.post('/getProfile', async (req, res) => {
 // ── GET /api/AdminUsers ──────────────────────────────────────
 router.get('/', async (req, res) => {
     try {
-        const { rows } = await query(
-            `SELECT * FROM admin_users WHERE deleted = false ORDER BY id DESC`
-        );
+        const { user_id } = req.query;
+        let sql = `SELECT id, name, email, mobile, role_id, role_type_id, uid, image_file, user_id, status, deleted
+                   FROM admin_users WHERE deleted = false`;
+        const params = [];
+        if (user_id) {
+            params.push(user_id);
+            sql += ` AND user_id = $1`;
+        }
+        sql += ` ORDER BY id DESC`;
+        const { rows } = await query(sql, params);
         return resp(res, '200', rows);
     } catch (err) {
         return resp(res, '500', err.message);
@@ -71,7 +78,8 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
     try {
         const user = await queryOne(
-            `SELECT * FROM admin_users WHERE id = $1 LIMIT 1`,
+            `SELECT id, name, email, mobile, role_id, role_type_id, uid, image_file, user_id, status, deleted
+             FROM admin_users WHERE id = $1 LIMIT 1`,
             [req.params.id]
         );
         if (!user) return resp(res, '404', 'User not found');
@@ -85,10 +93,11 @@ router.get('/:id', async (req, res) => {
 router.post('/', async (req, res) => {
     try {
         const { name, email, mobile, password, role_id, role_type_id, uid, image_file, user_id } = req.body;
+        if (!password) return resp(res, '400', 'Password is required');
         const hashed = await bcrypt.hash(password, 10);
         const user = await queryOne(
             `INSERT INTO admin_users (name, email, mobile, password, role_id, role_type_id, uid, image_file, user_id, status, deleted)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true,false) RETURNING *`,
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true,false) RETURNING id, name, email, mobile, role_id, role_type_id, uid, image_file, user_id, status, deleted`,
             [name, email, mobile, hashed, role_id, role_type_id, uid, image_file, user_id]
         );
         return resp(res, '200', user);
@@ -115,7 +124,8 @@ router.put('/:id', async (req, res) => {
                 uid = COALESCE($7, uid),
                 image_file = COALESCE($8, image_file),
                 status = COALESCE($9, status)
-             WHERE id = $10 RETURNING *`,
+             WHERE id = $10
+             RETURNING id, name, email, mobile, role_id, role_type_id, uid, image_file, user_id, status, deleted`,
             [name, email, mobile, hashed, role_id, role_type_id, uid, image_file, status, req.params.id]
         );
         return resp(res, '200', user);

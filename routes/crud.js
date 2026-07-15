@@ -21,7 +21,7 @@ const crudRoutes = (table, insertFields = []) => {
             let index = 1;
             
             // Allow basic filtering by known keys
-            const filterable = ['lab_test_id', 'drug_id', 'b2b_client_id', 'corporate_client_id', 'specimen_type_id'];
+            const filterable = ['lab_test_id', 'drug_id', 'b2b_client_id', 'corporate_client_id', 'specimen_type_id', 'country_id', 'state_id', 'city_id', 'district_id'];
             for (const key of filterable) {
                 if (req.query[key] !== undefined) {
                     whereClause += ` AND ${key} = $${index++}`;

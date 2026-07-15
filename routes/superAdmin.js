@@ -39,8 +39,26 @@ router.post('/login', async (req, res) => {
 // ── GET /api/SuperAdmin ──────────────────────────────────────
 router.get('/', async (req, res) => {
     try {
-        const { rows } = await query(`SELECT * FROM super_admin WHERE deleted = false ORDER BY id DESC`);
+        const { rows } = await query(
+            `SELECT id, name, email, mobile, role_id, role_type_id, uid, image_file, user_id, status, deleted
+             FROM super_admin WHERE deleted = false ORDER BY id DESC`
+        );
         return resp(res, '200', rows);
+    } catch (err) {
+        return resp(res, '500', err.message);
+    }
+});
+
+// ── GET /api/SuperAdmin/:id ──────────────────────────────────
+router.get('/:id', async (req, res) => {
+    try {
+        const user = await queryOne(
+            `SELECT id, name, email, mobile, role_id, role_type_id, uid, image_file, user_id, status, deleted
+             FROM super_admin WHERE id = $1 LIMIT 1`,
+            [req.params.id]
+        );
+        if (!user) return resp(res, '404', 'Super Admin not found');
+        return resp(res, '200', user);
     } catch (err) {
         return resp(res, '500', err.message);
     }
