@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { query, queryOne } = require('../db');
+const { sendSubscriptionPurchaseMail } = require('../utils/emailService');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
@@ -38,6 +39,12 @@ router.post('/', async (req, res) => {
              VALUES ($1, $2, $3, $4, true, false) RETURNING *`,
             [b2b_client_id, start_date, end_date, amount]
         );
+
+        const b2bClient = await queryOne('SELECT email FROM b2b_clients WHERE id = $1', [b2b_client_id]);
+        if (b2bClient && b2bClient.email) {
+            sendSubscriptionPurchaseMail(b2bClient.email, amount, start_date, end_date).catch(err => console.error('Subscription Email error:', err));
+        }
+
         return resp(res, '200', row);
     } catch (err) { return resp(res, '500', err.message); }
 });

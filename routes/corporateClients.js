@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const { query, queryOne } = require('../db');
 const { JWT_SECRET } = require('../middleware/auth');
 const { crudRoutes } = require('./crud');
+const { sendWelcomeCorporateMail } = require('../utils/emailService');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
@@ -67,6 +68,11 @@ router.post('/', async (req, res) => {
              address, country_id, state_id, city_id, district_id, region_id, pincode,
              hashedPassword, verification_status || false]
         );
+
+        if (row && row.email) {
+            sendWelcomeCorporateMail(row.email, row.company_name, password).catch(err => console.error('Corporate Email error:', err));
+        }
+
         return resp(res, '200', row);
     } catch (err) {
         return resp(res, '500', err.message);

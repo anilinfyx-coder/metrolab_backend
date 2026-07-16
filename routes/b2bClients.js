@@ -2,8 +2,33 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 const { query, queryOne } = require('../db');
 const { JWT_SECRET } = require('../middleware/auth');
+const { sendWelcomeB2BMail } = require('../utils/emailService');
+
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        const dir = 'uploads/b2bClients/';
+        if (!fs.existsSync(dir)) {
+            fs.mkdirSync(dir, { recursive: true });
+        }
+        cb(null, dir);
+    },
+    filename: function (req, file, cb) {
+        cb(null, Date.now() + '-' + Math.round(Math.random() * 1E9) + path.extname(file.originalname));
+    }
+});
+const upload = multer({ storage: storage });
+
+const uploadFields = upload.fields([
+    { name: 'logo_file', maxCount: 1 },
+    { name: 'report_header_file', maxCount: 1 },
+    { name: 'report_footer_file', maxCount: 1 },
+    { name: 'medical_officer_signature_file', maxCount: 1 }
+]);
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
@@ -87,8 +112,17 @@ router.post('/changePassword', async (req, res) => {
 });
 
 // ── POST /api/B2bClients ──────────────────────────────────────
-router.post('/', async (req, res) => {
+router.post('/', uploadFields, async (req, res) => {
     try {
+        let body = req.body || {};
+        
+        if (req.files) {
+            if (req.files.logo_file) body.logo_file = req.files.logo_file[0].filename;
+            if (req.files.report_header_file) body.report_header_file = req.files.report_header_file[0].filename;
+            if (req.files.report_footer_file) body.report_footer_file = req.files.report_footer_file[0].filename;
+            if (req.files.medical_officer_signature_file) body.medical_officer_signature_file_name = req.files.medical_officer_signature_file[0].filename;
+        }
+
         const {
             role_id, company_name, contact_person_name, mobile, public_phone_no,
             email, public_email, public_fax, address, country_id, state_id, city_id,
@@ -98,7 +132,7 @@ router.post('/', async (req, res) => {
             medical_officer_position, medical_officer_signature_file_name,
             is_approval, approval_note, smtp_server, smtp_port, smtp_email, smtp_password,
             user_id, role_type_id
-        } = req.body;
+        } = body;
 
         const row = await queryOne(
             `INSERT INTO b2b_clients (
@@ -124,6 +158,11 @@ router.post('/', async (req, res) => {
                 is_approval, approval_note, smtp_server, smtp_port, smtp_email, smtp_password,
                 user_id, role_type_id]
         );
+
+        if (row && row.email) {
+            sendWelcomeB2BMail(row.email, row.company_name, password).catch(err => console.error('B2B Email error:', err));
+        }
+
         return resp(res, '200', row);
     } catch (err) { return resp(res, '500', err.message); }
 });
@@ -145,9 +184,17 @@ router.get('/:id', async (req, res) => {
 });
 
 // ── PUT /api/B2bClients/:id ───────────────────────────────────
-router.put('/:id', async (req, res) => {
+router.put('/:id', uploadFields, async (req, res) => {
     try {
-        const body = req.body || {};
+        let body = req.body || {};
+
+        if (req.files) {
+            if (req.files.logo_file) body.logo_file = req.files.logo_file[0].filename;
+            if (req.files.report_header_file) body.report_header_file = req.files.report_header_file[0].filename;
+            if (req.files.report_footer_file) body.report_footer_file = req.files.report_footer_file[0].filename;
+            if (req.files.medical_officer_signature_file) body.medical_officer_signature_file_name = req.files.medical_officer_signature_file[0].filename;
+        }
+
         const fields = [
             'company_name', 'contact_person_name', 'mobile', 'email', 'address', 'pincode',
             'public_phone_no', 'public_email', 'public_fax',

@@ -4,6 +4,7 @@ const { query, queryOne } = require('../db');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 const { authMiddleware } = require('../middleware/auth');
+const { sendLabNotificationMail, sendTestRequestEmployeeReportMail } = require('../utils/emailService');
 
 router.use(authMiddleware);
 
@@ -51,6 +52,15 @@ router.post('/saveTestRequestInBulk', async (req, res) => {
         // reasonForTest, drugCount, alcoholCount, alternateCount, totalCount
         // employeesList: [{ id, isSelectedForDrug, isSelectedForAlcohol, isSelectedForAlternate }]
 
+        const isCorporate = req.user.portal === 'corporate';
+        const corpClientId = isCorporate ? req.user.id : req.user.corporate_client_id;
+        
+        let b2bClientId = req.user.b2b_client_id;
+        if (isCorporate) {
+            const corp = await queryOne('SELECT b2b_client_id FROM corporate_clients WHERE id = $1', [corpClientId]);
+            if (corp) b2bClientId = corp.b2b_client_id;
+        }
+
         // 1. Insert parent test_request record
         const trQuery = `
             INSERT INTO test_request (
@@ -73,8 +83,8 @@ router.post('/saveTestRequestInBulk', async (req, res) => {
             payload.alternateCount || 0,
             payload.totalCount || 0,
             payload.reasonForTest || '',
-            req.user.corporate_client_id || null,
-            req.user.b2b_client_id || null,
+            corpClientId || null,
+            b2bClientId || null,
             req.user.id || null
         ];
 
@@ -100,9 +110,19 @@ router.post('/saveTestRequestInBulk', async (req, res) => {
                     !!emp.isSelectedForDrug,
                     !!emp.isSelectedForAlcohol,
                     !!emp.isSelectedForAlternate,
-                    req.user.b2b_client_id || null,
+                    b2bClientId || null,
                     req.user.id || null
                 ]);
+            }
+        }
+
+        if (b2bClientId) {
+            const b2bClient = await queryOne('SELECT email, company_name FROM b2b_clients WHERE id = $1', [b2bClientId]);
+            const corpClient = corpClientId ? await queryOne('SELECT company_name FROM corporate_clients WHERE id = $1', [corpClientId]) : null;
+            
+            if (b2bClient && b2bClient.email) {
+                const corpName = corpClient ? corpClient.company_name : 'N/A';
+                sendLabNotificationMail(b2bClient.email, b2bClient.company_name, corpName, payload.title, payload.totalCount).catch(err => console.error('Lab Notification Email error:', err));
             }
         }
 
@@ -116,12 +136,13 @@ router.post('/saveTestRequestInBulk', async (req, res) => {
 // GET list of test requests for this corporate client
 router.post('/getTestRequestList', async (req, res) => {
     try {
+        const corpClientId = req.user.portal === 'corporate' ? req.user.id : req.user.corporate_client_id;
         const { rows } = await query(`
             SELECT id, creation_timestamp, title, year, frequency, quarter, total_count, status
             FROM test_request
             WHERE corporate_client_id = $1 AND deleted = false
             ORDER BY id DESC
-        `, [req.user.corporate_client_id]);
+        `, [corpClientId]);
 
         // Format creation_timestamp like legacy UI: MM/DD/YYYY, HH:mm A
         const formatted = rows.map(r => {
@@ -241,6 +262,106 @@ router.post('/downloadTestRequestReport', async (req, res) => {
     } catch(err) {
         console.error(err);
         return res.status(500).json({ response_code: '500', obj: err.message });
+    }
+});
+
+router.post('/getTestRequestEmployees', async (req, res) => {
+    try {
+        const { test_request_id } = req.body;
+        if (!test_request_id) return resp(res, '400', 'Missing test_request_id');
+
+        // Fetch employees associated with this test request
+        const { rows: employees } = await query(`
+            SELECT e.id, e.first_name, e.last_name, e.mobile, e.department, 
+                   tre.is_selected_for_drug, tre.is_selected_for_alcohol, tre.is_selected_for_alternate,
+                   tre.drug_report_submit_status as "drugReportSubmitStatus", 
+                   tre.alcohol_report_submit_status as "alcoholReportSubmitStatus"
+            FROM test_request_employee tre
+            JOIN employees e ON tre.employee_id = e.id
+            WHERE tre.test_request_id = $1
+        `, [test_request_id]);
+
+        return resp(res, '200', employees);
+    } catch(err) {
+        console.error(err);
+        return resp(res, '500', err.message);
+    }
+});
+
+router.post('/emailTestRequestReport', async (req, res) => {
+    try {
+        const { test_request_id, employee_id } = req.body;
+        
+        const trQuery = `
+            SELECT t.*, c.company_name as "corporateClientCompany", b.company_name as "b2bClientCompany"
+            FROM test_request t
+            LEFT JOIN corporate_clients c ON t.corporate_client_id = c.id
+            LEFT JOIN b2b_clients b ON t.b2b_client_id = b.id
+            WHERE t.id = $1 AND t.deleted = false
+        `;
+        const tr = await queryOne(trQuery, [test_request_id]);
+        if (!tr) return resp(res, '404', 'Test Request not found');
+
+        const { rows: employees } = await query(`
+            SELECT e.first_name, e.last_name, e.department, e.email, tre.is_selected_for_drug, tre.is_selected_for_alcohol, tre.is_selected_for_alternate
+            FROM test_request_employee tre
+            JOIN employees e ON tre.employee_id = e.id
+            WHERE tre.test_request_id = $1 AND e.id = $2
+        `, [test_request_id, employee_id]);
+        
+        const emp = employees[0];
+        if (!emp) return resp(res, '404', 'Employee not found in this request');
+        if (!emp.email) return resp(res, '400', 'Employee does not have an email address');
+
+        // Generate PDF into a Buffer
+        const doc = new PDFDocument({ margin: 50 });
+        const buffers = [];
+        doc.on('data', buffers.push.bind(buffers));
+        doc.on('end', async () => {
+            const pdfData = Buffer.concat(buffers);
+            const success = await sendTestRequestEmployeeReportMail(
+                emp.email,
+                `${emp.first_name} ${emp.last_name}`,
+                tr.title,
+                pdfData,
+                `TR-${tr.id}-${emp.first_name}-Report.pdf`
+            );
+            if (success) {
+                return resp(res, '200', 'Email sent successfully');
+            } else {
+                return resp(res, '500', 'Failed to send email via SMTP');
+            }
+        });
+
+        // Header
+        doc.fontSize(20).text('Test Request Report (Employee)', { align: 'center' });
+        doc.moveDown();
+        
+        // Info Section
+        doc.fontSize(12);
+        doc.text(`Request ID: TR-${tr.id}`);
+        doc.text(`Date: ${new Date(tr.creation_timestamp).toLocaleString()}`);
+        doc.text(`Corporate Name: ${tr.corporateClientCompany || tr.b2bClientCompany || 'N/A'}`);
+        doc.text(`Title: ${tr.title}`);
+        doc.moveDown();
+
+        doc.fontSize(16).text('Employee Details', { underline: true });
+        doc.moveDown();
+        doc.fontSize(12);
+        doc.text(`Name: ${emp.first_name} ${emp.last_name}`);
+        doc.text(`Department: ${emp.department || 'N/A'}`);
+        
+        const tests = [];
+        if (emp.is_selected_for_drug) tests.push('Drug');
+        if (emp.is_selected_for_alcohol) tests.push('Alcohol');
+        if (emp.is_selected_for_alternate) tests.push('Alternate');
+        
+        doc.text(`Assigned Tests: ${tests.length > 0 ? tests.join(', ') : 'None'}`);
+        doc.end();
+
+    } catch(err) {
+        console.error(err);
+        return resp(res, '500', err.message);
     }
 });
 
