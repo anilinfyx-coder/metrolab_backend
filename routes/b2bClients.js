@@ -149,12 +149,14 @@ router.put('/:id', async (req, res) => {
     try {
         const body = req.body || {};
         const fields = [
-            'company_name', 'contact_person_name', 'mobile', 'email', 'address',
+            'company_name', 'contact_person_name', 'mobile', 'email', 'address', 'pincode',
             'public_phone_no', 'public_email', 'public_fax',
             'support_person_name', 'support_mobile', 'support_email',
             'tagline', 'primary_color_code', 'website',
+            'medical_officer_name', 'medical_officer_position', 'mrocc', 'clia_number',
+            'logo_file', 'report_header_file', 'report_footer_file', 'medical_officer_signature_file_name',
             'smtp_server', 'smtp_port', 'smtp_email', 'smtp_password',
-            'status', 'is_approval',
+            'is_approval', 'approval_note', 'status',
         ];
 
         const updates = [];
