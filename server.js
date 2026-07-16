@@ -30,6 +30,7 @@ app.use('/api/Patient', patientRouter);
 app.use('/api/LabTests', labTestsRouter);
 app.use('/api/B2bClients', b2bClientsRouter);
 app.use('/api/CorporateClients', corporateClientsRouter);
+app.use('/api/B2bClientDocument', require('./routes/b2bClientDocument'));
 app.use('/api/B2bClientSubscription', b2bClientSubscriptionRouter);
 app.use('/api/B2bClientLabTestAccess', b2bClientLabTestAccessRouter);
 app.use('/api/LabTestReport', labTestReportRoutes);

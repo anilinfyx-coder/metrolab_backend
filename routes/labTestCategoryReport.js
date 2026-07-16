@@ -88,22 +88,42 @@ router.post('/getLabTestCategoryReportDetails', async (req, res) => {
         // Using LEFT JOIN so we get the question even if there's no answer yet
         const questionsQuery = `
             SELECT 
-                rq.id as report_question_id,
+                rq.id as report_questions_id,
                 rq.question_text,
                 rq.description,
                 rq.answer_type,
                 rq.answer_option,
                 a.id as answer_id,
-                a.answer as value
+                a.value as value
             FROM report_questions rq
             LEFT JOIN lab_test_category_report_question_answer a 
-                ON a.report_question_id = rq.id AND a.lab_test_category_report_id = $1
+                ON a.report_questions_id = rq.id AND a.lab_test_category_report_id = $1
             WHERE rq.lab_test_id = $2 AND rq.deleted = false
             ORDER BY rq.id ASC
         `;
         const { rows: questions } = await query(questionsQuery, [id, report.lab_test_id]);
         
         report.testReportQuestionList = questions;
+
+        // 4. Fetch parameters and their answers
+        const paramsQuery = `
+            SELECT 
+                rp.id as report_request_parameters_id,
+                rp.name as reportRequestParameters,
+                rp.description,
+                rp.screening_cutoff as screeningCutoff,
+                rp.confirmation_cutoff as confirmationCutoff,
+                rp.unit_text as unitText,
+                a.id as answer_id,
+                a.value
+            FROM report_request_parameters rp
+            LEFT JOIN lab_test_category_report_request_parameter_value a 
+                ON a.report_request_parameters_id = rp.id AND a.lab_test_category_report_id = $1
+            WHERE rp.lab_test_id = $2 AND rp.deleted = false
+            ORDER BY rp.id ASC
+        `;
+        const { rows: parameters } = await query(paramsQuery, [id, report.lab_test_id]);
+        report.testResultParameterList = parameters;
 
         return resp(res, '200', report);
     } catch (err) {
@@ -133,8 +153,22 @@ router.post('/saveLabTestCategoryReport', async (req, res) => {
                 test_remark = $9,
                 report_status = $10,
                 final_remark = $11,
-                test_result = $12
-            WHERE id = $13
+                test_result = $12,
+                fasting = $13,
+                requisition_no = $14,
+                device_identifier = $15,
+                date_administered = $16,
+                applied_to_arm = $17,
+                lot = $18,
+                expiry_date = $19,
+                date_read = $20,
+                mm_indurations = $21,
+                follow_up = $22,
+                reference_range_note = $23,
+                clinical_significance_note = $24,
+                result_interpretation_note = $25,
+                final_result_disposition = $26
+            WHERE id = $27
         `, [
             data.specimen_type_id || null,
             data.collected_timestamp || null,
@@ -148,6 +182,20 @@ router.post('/saveLabTestCategoryReport', async (req, res) => {
             data.report_status || null,
             data.final_remark || null,
             data.test_result || null,
+            data.fasting || null,
+            data.requisition_no || null,
+            data.device_identifier || null,
+            data.date_administered || null,
+            data.applied_to_arm || null,
+            data.lot || null,
+            data.expiry_date || null,
+            data.date_read || null,
+            data.mm_indurations || null,
+            data.follow_up || null,
+            data.reference_range_note || null,
+            data.clinical_significance_note || null,
+            data.result_interpretation_note || null,
+            data.final_result_disposition || null,
             id
         ]);
 
@@ -157,7 +205,7 @@ router.post('/saveLabTestCategoryReport', async (req, res) => {
                 // Check if answer already exists
                 const existing = await queryOne(`
                     SELECT id FROM lab_test_category_report_question_answer 
-                    WHERE lab_test_category_report_id = $1 AND report_question_id = $2
+                    WHERE lab_test_category_report_id = $1 AND report_questions_id = $2
                 `, [id, q.report_question_id]);
 
                 // Some boolean answers might be sent as boolean, cast to string
@@ -171,16 +219,48 @@ router.post('/saveLabTestCategoryReport', async (req, res) => {
                 if (existing) {
                     await queryOne(`
                         UPDATE lab_test_category_report_question_answer 
-                        SET answer = $1 
+                        SET value = $1 
                         WHERE id = $2
                     `, [stringVal, existing.id]);
                 } else {
                     await queryOne(`
                         INSERT INTO lab_test_category_report_question_answer (
-                            lab_test_category_report_id, report_question_id, answer, 
+                            lab_test_category_report_id, report_questions_id, value, 
                             creation_timestamp, created_by_id
                         ) VALUES ($1, $2, $3, NOW(), $4)
                     `, [id, q.report_question_id, stringVal, req.user.id]);
+                }
+            }
+        }
+
+        // 3. Save parameters
+        if (data.testResultParameterList && data.testResultParameterList.length > 0) {
+            for (const p of data.testResultParameterList) {
+                const existing = await queryOne(`
+                    SELECT id FROM lab_test_category_report_request_parameter_value 
+                    WHERE lab_test_category_report_id = $1 AND report_request_parameters_id = $2
+                `, [id, p.report_request_parameters_id]);
+
+                let stringVal = p.value;
+                if (stringVal !== null && stringVal !== undefined) {
+                    stringVal = stringVal.toString();
+                } else {
+                    stringVal = '';
+                }
+
+                if (existing) {
+                    await queryOne(`
+                        UPDATE lab_test_category_report_request_parameter_value 
+                        SET value = $1 
+                        WHERE id = $2
+                    `, [stringVal, existing.id]);
+                } else {
+                    await queryOne(`
+                        INSERT INTO lab_test_category_report_request_parameter_value (
+                            lab_test_category_report_id, report_request_parameters_id, value, 
+                            creation_timestamp, created_by_id
+                        ) VALUES ($1, $2, $3, NOW(), $4)
+                    `, [id, p.report_request_parameters_id, stringVal, req.user.id]);
                 }
             }
         }
