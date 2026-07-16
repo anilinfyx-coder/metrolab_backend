@@ -285,4 +285,39 @@ router.post('/changeLabTestCategoryReportStatus', async (req, res) => {
     }
 });
 
+// POST getLabTestCategoryCountList
+router.post('/getLabTestCategoryCountList', async (req, res) => {
+    try {
+        const { startDate, endDate } = req.body;
+        // The user ID from the JWT payload
+        const b2bUserId = req.user.id;
+        
+        let queryStr = `
+            SELECT 
+                l.id as lab_test_id,
+                l.name,
+                COUNT(r.id) as "labTestCount"
+            FROM lab_tests l
+            INNER JOIN lab_test_category_report r ON r.lab_test_id = l.id
+            WHERE r.b2b_client_id = $1 AND r.deleted = false
+        `;
+        const values = [b2bUserId];
+        let paramIndex = 2;
+
+        if (startDate && endDate) {
+            queryStr += ` AND DATE(r.creation_timestamp) BETWEEN $${paramIndex++} AND $${paramIndex++}`;
+            values.push(startDate, endDate);
+        }
+
+        queryStr += ` GROUP BY l.id, l.name ORDER BY l.name ASC`;
+
+        const { rows } = await query(queryStr, values);
+
+        return resp(res, '200', rows);
+    } catch (err) {
+        console.error(err);
+        return resp(res, '500', err.message);
+    }
+});
+
 module.exports = router;
