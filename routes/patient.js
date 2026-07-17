@@ -1,8 +1,50 @@
 const express = require('express');
 const router = express.Router();
-const { query, queryOne } = require('../db');
+const { pool, query, queryOne } = require('../db');
+const { authMiddleware } = require('../middleware/auth');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
+
+router.use(authMiddleware);
+
+async function generateNextPatientUid(dbClient) {
+    const run = (text, params) => dbClient.query(text, params);
+
+    const { rows } = await run(
+        `SELECT uid FROM patient
+         WHERE uid ~ '^PT[0-9]+$'
+         ORDER BY CAST(SUBSTRING(uid FROM 3) AS INTEGER) DESC
+         LIMIT 1
+         FOR UPDATE`
+    );
+
+    let nextNum = 1;
+    if (rows[0]?.uid) {
+        const parsed = parseInt(rows[0].uid.slice(2), 10);
+        if (!Number.isNaN(parsed)) nextNum = parsed + 1;
+    }
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+        const uid = `PT${String(nextNum + attempt).padStart(3, '0')}`;
+        const exists = await run(`SELECT id FROM patient WHERE uid = $1 LIMIT 1`, [uid]);
+        if (exists.rows.length === 0) return uid;
+    }
+
+    throw new Error('Unable to generate a unique patient UID');
+}
+
+async function resolveAdminContext(userId) {
+    const admin = await queryOne(
+        `SELECT id, user_id, role_type_id FROM admin_users WHERE id = $1 AND deleted = false LIMIT 1`,
+        [userId]
+    );
+    return {
+        created_by_id: userId,
+        b2b_client_id: admin?.user_id || null,
+        user_id: admin?.user_id || userId,
+        role_type_id: admin?.role_type_id || null,
+    };
+}
 
 // ── GET /api/Patient ─────────────────────────────────────────
 router.get('/', async (req, res) => {
@@ -14,6 +56,34 @@ router.get('/', async (req, res) => {
              WHERE p.deleted = false ORDER BY p.id DESC`
         );
         return resp(res, '200', rows);
+    } catch (err) {
+        return resp(res, '500', err.message);
+    }
+});
+
+// ── GET /api/Patient/search?uid=&mobile= ───────────────────
+router.get('/search', async (req, res) => {
+    try {
+        const { uid, mobile } = req.query;
+        if (!uid && !mobile) return resp(res, '400', 'UID or Mobile is required');
+
+        let sql = `SELECT * FROM patient WHERE deleted = false`;
+        const params = [];
+        let i = 1;
+
+        if (uid) {
+            sql += ` AND uid ILIKE $${i++}`;
+            params.push(String(uid).trim());
+        }
+        if (mobile) {
+            sql += ` AND mobile ILIKE $${i++}`;
+            params.push(`%${String(mobile).trim()}%`);
+        }
+
+        sql += ` ORDER BY id DESC LIMIT 1`;
+        const patient = await queryOne(sql, params);
+        if (!patient) return resp(res, '404', 'Patient not found');
+        return resp(res, '200', patient);
     } catch (err) {
         return resp(res, '500', err.message);
     }
@@ -55,22 +125,71 @@ router.get('/:id', async (req, res) => {
 
 // ── POST /api/Patient ────────────────────────────────────────
 router.post('/', async (req, res) => {
+    const client = await pool.connect();
     try {
-        const { b2b_client_id, uid, name, driving_license, mobile, email, gender, dob,
-                street1, street2, city, state, zipcode, driving_license_state, ssn, user_id, role_type_id } = req.body;
-        const patient = await queryOne(
+        const {
+            b2b_client_id, uid, name, driving_license, mobile, email, gender, dob,
+            street1, street2, city, state, zipcode, driving_license_state, ssn,
+            user_id, role_type_id
+        } = req.body;
+
+        const ctx = await resolveAdminContext(req.user.id);
+
+        await client.query('BEGIN');
+
+        let patientUid = (uid || '').trim();
+        if (!patientUid) {
+            patientUid = await generateNextPatientUid(client);
+        } else {
+            const dup = await client.query(
+                `SELECT id FROM patient WHERE uid = $1 AND deleted = false LIMIT 1`,
+                [patientUid]
+            );
+            if (dup.rows.length > 0) {
+                await client.query('ROLLBACK');
+                return resp(res, '400', `Patient UID ${patientUid} already exists.`);
+            }
+        }
+
+        const insert = await client.query(
             `INSERT INTO patient 
                 (b2b_client_id, uid, name, driving_license, mobile, email, gender, dob,
                  street1, street2, city, state, zipcode, driving_license_state, ssn,
-                 user_id, role_type_id, status, deleted)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,true,false)
+                 created_by_id, user_id, role_type_id, status, deleted, creation_timestamp)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,true,false,NOW())
              RETURNING *`,
-            [b2b_client_id, uid, name, driving_license, mobile, email, gender, dob,
-             street1, street2, city, state, zipcode, driving_license_state, ssn, user_id, role_type_id]
+            [
+                b2b_client_id || ctx.b2b_client_id,
+                patientUid,
+                name,
+                driving_license,
+                mobile,
+                email,
+                gender,
+                dob,
+                street1,
+                street2,
+                city,
+                state,
+                zipcode,
+                driving_license_state,
+                ssn,
+                ctx.created_by_id,
+                user_id || ctx.user_id,
+                role_type_id || ctx.role_type_id,
+            ]
         );
-        return resp(res, '200', patient);
+
+        await client.query('COMMIT');
+        return resp(res, '200', insert.rows[0]);
     } catch (err) {
+        await client.query('ROLLBACK');
+        if (err.code === '23505') {
+            return resp(res, '400', 'Patient UID already exists.');
+        }
         return resp(res, '500', err.message);
+    } finally {
+        client.release();
     }
 });
 

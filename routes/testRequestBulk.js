@@ -19,9 +19,14 @@ router.get('/', async (req, res) => {
             ORDER BY t.id DESC
         `);
         
-        // Format creation_timestamp like legacy UI: MM/DD/YYYY, HH:mm A
+        // Format for listing UI: DD-MM-YYYY HH:MM:SS
         const formatted = rows.map(r => {
             const date = new Date(r.creation_timestamp);
+            const pad = (n) => String(n).padStart(2, '0');
+            const dateTime = Number.isNaN(date.getTime())
+                ? ''
+                : `${pad(date.getDate())}-${pad(date.getMonth() + 1)}-${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+
             return {
                 id: r.id,
                 title: r.title,
@@ -29,11 +34,12 @@ router.get('/', async (req, res) => {
                 frequency: r.frequency,
                 quarter: r.quarter,
                 status: r.status,
-                allSubmitStatus: r.status,
+                allSubmitStatus: r.all_submit_status ?? r.status,
                 numberOfEmployee: r.total_count,
                 corporateClientCompany: r.corporateClientCompany,
                 b2bClientCompany: r.b2bClientCompany,
-                creationTimestamp: `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}, ${date.getHours() > 12 ? date.getHours() - 12 : (date.getHours() === 0 ? 12 : date.getHours())}:${date.getMinutes().toString().padStart(2, '0')} ${date.getHours() >= 12 ? 'PM' : 'AM'}`
+                creation_timestamp: r.creation_timestamp,
+                creationTimestamp: dateTime,
             };
         });
 
@@ -184,6 +190,108 @@ router.post('/changeTestRequestStatus', async (req, res) => {
         await queryOne('UPDATE test_request SET status = $1 WHERE id = $2', [status, id]);
         return resp(res, '200', 'Test Request Status Updated Successfully');
     } catch(err) {
+        return resp(res, '500', err.message);
+    }
+});
+
+function formatListDateTime(value) {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${pad(date.getDate())}-${pad(date.getMonth() + 1)}-${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+// GET /api/TestRequest/:id — full details + employees for view page
+router.get('/:id', async (req, res) => {
+    try {
+        const tr = await queryOne(`
+            SELECT t.*,
+                   c.company_name as corporate_client_company,
+                   b.company_name as b2b_client_company
+            FROM test_request t
+            LEFT JOIN corporate_clients c ON t.corporate_client_id = c.id
+            LEFT JOIN b2b_clients b ON t.b2b_client_id = b.id
+            WHERE t.id = $1 AND t.deleted = false
+            LIMIT 1
+        `, [req.params.id]);
+
+        if (!tr) return resp(res, '404', 'Test Request not found');
+
+        const { rows: employees } = await query(`
+            SELECT tre.id,
+                   tre.employee_id,
+                   tre.is_selected_for_drug,
+                   tre.is_selected_for_alcohol,
+                   tre.is_selected_for_alternate,
+                   tre.status,
+                   tre.deleted,
+                   e.first_name,
+                   e.last_name,
+                   e.mobile,
+                   e.department,
+                   e.email
+            FROM test_request_employee tre
+            JOIN employees e ON e.id = tre.employee_id
+            WHERE tre.test_request_id = $1
+              AND tre.deleted = false
+            ORDER BY e.last_name ASC NULLS LAST, e.first_name ASC NULLS LAST
+        `, [tr.id]);
+
+        const totalSelectedCount = employees.filter(
+            (e) => e.is_selected_for_drug || e.is_selected_for_alcohol || e.is_selected_for_alternate
+        ).length;
+
+        return resp(res, '200', {
+            id: tr.id,
+            title: tr.title,
+            reason_for_test: tr.reason_for_test,
+            test_type: tr.test_type,
+            year: tr.year,
+            frequency: tr.frequency,
+            quarter: tr.quarter,
+            selection_type: tr.selection_type,
+            drug_count: tr.drug_count,
+            alcohol_count: tr.alcohol_count,
+            alternate_count: tr.alternate_count,
+            total_count: tr.total_count,
+            total_selected_count: totalSelectedCount,
+            status: tr.status,
+            creation_timestamp: tr.creation_timestamp,
+            creationTimestamp: formatListDateTime(tr.creation_timestamp),
+            corporateClientCompany: tr.corporate_client_company,
+            b2bClientCompany: tr.b2b_client_company,
+            employees: employees.map((e) => ({
+                id: e.id,
+                employee_id: e.employee_id,
+                first_name: e.first_name || '',
+                last_name: e.last_name || '',
+                mobile: e.mobile || '',
+                department: e.department || '',
+                email: e.email || '',
+                is_selected_for_drug: !!e.is_selected_for_drug,
+                is_selected_for_alcohol: !!e.is_selected_for_alcohol,
+                is_selected_for_alternate: !!e.is_selected_for_alternate,
+                status: e.status !== false,
+            })),
+        });
+    } catch (err) {
+        console.error(err);
+        return resp(res, '500', err.message);
+    }
+});
+
+// POST exclude / restore employee on a test request
+router.post('/changeTestRequestEmployeeStatus', async (req, res) => {
+    try {
+        const { id, status } = req.body;
+        if (!id) return resp(res, '400', 'Employee row id is required');
+        await queryOne(
+            `UPDATE test_request_employee SET status = $1 WHERE id = $2`,
+            [!!status, id]
+        );
+        return resp(res, '200', 'Employee status updated');
+    } catch (err) {
         return resp(res, '500', err.message);
     }
 });

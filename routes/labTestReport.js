@@ -33,10 +33,24 @@ router.post('/', async (req, res) => {
         // Determine final result text (handle "Other")
         const fResult = finalResult === '' ? finalResultText : finalResult;
 
+        // Generate report UID (LTCR0001, LTCR0002, ...)
+        const lastUidRow = await queryOne(
+            `SELECT uid FROM lab_test_category_report
+             WHERE uid ~ '^LTCR[0-9]+$'
+             ORDER BY CAST(SUBSTRING(uid FROM 5) AS INTEGER) DESC
+             LIMIT 1`
+        );
+        let nextNum = 1;
+        if (lastUidRow?.uid) {
+            const parsed = parseInt(String(lastUidRow.uid).slice(4), 10);
+            if (!Number.isNaN(parsed)) nextNum = parsed + 1;
+        }
+        const reportUid = `LTCR${String(nextNum).padStart(4, '0')}`;
+
         // Insert into lab_test_category_report
         const report = await queryOne(
             `INSERT INTO lab_test_category_report (
-                patient_id, lab_test_id, waiting_list_id,
+                uid, patient_id, lab_test_id, waiting_list_id,
                 collected_timestamp, received_timestamp, reported_timestamp,
                 regulation, specimen_type_id, date_of_test,
                 test_performed_by, report_status, fasting, requisition_no,
@@ -46,18 +60,18 @@ router.post('/', async (req, res) => {
                 final_result_disposition, final_remark, date_administered,
                 applied_to_arm, status, deleted, creation_timestamp
             ) VALUES (
-                $1, $2, $3,
-                $4, $5, $6,
-                $7, $8, $9,
-                $10, $11, $12, $13,
-                $14, $15, $16, $17, $18,
-                $19, $20, $21, $22,
-                $23, $24,
-                $25, $26, $27,
-                $28, true, false, NOW()
+                $1, $2, $3, $4,
+                $5, $6, $7,
+                $8, $9, $10,
+                $11, $12, $13, $14,
+                $15, $16, $17, $18, $19,
+                $20, $21, $22, $23,
+                $24, $25,
+                $26, $27, $28,
+                $29, true, false, NOW()
             ) RETURNING *`,
             [
-                wl.patient_id, lab_test_id, waiting_list_id,
+                reportUid, wl.patient_id, lab_test_id, waiting_list_id,
                 colTimestamp, recTimestamp, repTimestamp,
                 regulation, specimenTypeId || null, dateOfTest || null,
                 testPerformedBy, reportStatus, fasting, requisitionNo,
