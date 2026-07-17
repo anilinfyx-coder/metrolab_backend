@@ -29,13 +29,7 @@ router.post('/', async (req, res) => {
         let b2bClient = null;
         let newBalance = 0;
         if (b2b_client_id) {
-            const labTest = await queryOne('SELECT name FROM lab_tests WHERE id = $1', [lab_test_id]);
-            const testName = (labTest?.name || '').toLowerCase();
-            
-            let priceKey = 'alternate_test_price';
-            if (testName.includes('drug')) priceKey = 'drug_test_price';
-            else if (testName.includes('alcohol')) priceKey = 'alcohol_test_price';
-
+            const priceKey = `lab_test_${lab_test_id}_price`;
             const priceRow = await queryOne('SELECT setting_value FROM global_settings WHERE setting_key = $1', [priceKey]);
             testPrice = parseFloat(priceRow?.setting_value || 0);
 
