@@ -24,6 +24,33 @@ router.post('/', async (req, res) => {
         const wl = await queryOne(`SELECT patient_id FROM waiting_list WHERE id = $1`, [waiting_list_id]);
         if (!wl) return resp(res, '404', 'Waiting list not found');
 
+        // ==== WALLET DEDUCTION LOGIC ====
+        let testPrice = 0;
+        let b2bClient = null;
+        let newBalance = 0;
+        if (b2b_client_id) {
+            const labTest = await queryOne('SELECT name FROM lab_tests WHERE id = $1', [lab_test_id]);
+            const testName = (labTest?.name || '').toLowerCase();
+            
+            let priceKey = 'alternate_test_price';
+            if (testName.includes('drug')) priceKey = 'drug_test_price';
+            else if (testName.includes('alcohol')) priceKey = 'alcohol_test_price';
+
+            const priceRow = await queryOne('SELECT setting_value FROM global_settings WHERE setting_key = $1', [priceKey]);
+            testPrice = parseFloat(priceRow?.setting_value || 0);
+
+            if (testPrice > 0) {
+                b2bClient = await queryOne('SELECT wallet_balance FROM b2b_clients WHERE id = $1', [b2b_client_id]);
+                const currentBalance = parseFloat(b2bClient?.wallet_balance || 0);
+
+                if (currentBalance < testPrice) {
+                    return resp(res, '400', `Insufficient Wallet Balance. Needed: $${testPrice}, Available: $${currentBalance}`);
+                }
+                newBalance = currentBalance - testPrice;
+            }
+        }
+        // ================================
+
         // Combine date/time fields if they exist
         const formatDateTime = (d, t) => (d && t ? `${d} ${t}` : null);
         const colTimestamp = formatDateTime(collectedDate, collectedTime);
@@ -112,6 +139,16 @@ router.post('/', async (req, res) => {
                 }
             }
         }
+
+        // ==== COMPLETE WALLET TRANSACTION ====
+        if (b2b_client_id && testPrice > 0) {
+            await query('UPDATE b2b_clients SET wallet_balance = $1 WHERE id = $2', [newBalance, b2b_client_id]);
+            await query(`
+                INSERT INTO b2b_wallet_transactions (b2b_client_id, transaction_type, amount, closing_balance, description, reference_id)
+                VALUES ($1, 'DEBIT', $2, $3, $4, $5)
+            `, [b2b_client_id, testPrice, newBalance, 'Test Report Deduction', report.id]);
+        }
+        // =====================================
 
         return resp(res, '200', report);
     } catch (err) {

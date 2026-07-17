@@ -6,7 +6,7 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const { query, queryOne } = require('../db');
-const { JWT_SECRET } = require('../middleware/auth');
+const { JWT_SECRET, authMiddleware } = require('../middleware/auth');
 const { sendWelcomeB2BMail } = require('../utils/emailService');
 
 const storage = multer.diskStorage({
@@ -174,7 +174,8 @@ router.get('/:id', async (req, res) => {
             `SELECT id, role_id, company_name, contact_person_name, mobile, public_phone_no,
                     email, public_email, public_fax, address, support_mobile, support_email,
                     support_person_name, tagline, primary_color_code, website,
-                    smtp_server, smtp_port, smtp_email, smtp_password, status, deleted
+                    smtp_server, smtp_port, smtp_email, smtp_password, status, deleted,
+                    wallet_balance
              FROM b2b_clients WHERE id = $1 LIMIT 1`,
             [req.params.id]
         );
@@ -251,6 +252,49 @@ router.delete('/:id', async (req, res) => {
         );
         return resp(res, '200', row);
     } catch (err) { return resp(res, '500', err.message); }
+});
+
+// ── POST /api/B2bClients/rechargeWallet ────────────────────────────────
+router.post('/rechargeWallet', authMiddleware, async (req, res) => {
+    try {
+        const { b2b_client_id, amount, description } = req.body;
+        if (!b2b_client_id || !amount || isNaN(amount) || amount <= 0) {
+            return resp(res, '400', 'Invalid recharge amount');
+        }
+
+        // We must lock the row or just do an atomic update
+        const client = await queryOne(`SELECT wallet_balance FROM b2b_clients WHERE id = $1`, [b2b_client_id]);
+        if (!client) return resp(res, '404', 'B2B Client not found');
+
+        const newBalance = parseFloat(client.wallet_balance || 0) + parseFloat(amount);
+
+        await query(`UPDATE b2b_clients SET wallet_balance = $1 WHERE id = $2`, [newBalance, b2b_client_id]);
+
+        await query(`
+            INSERT INTO b2b_wallet_transactions (b2b_client_id, transaction_type, amount, closing_balance, description, created_by_id)
+            VALUES ($1, 'CREDIT', $2, $3, $4, $5)
+        `, [b2b_client_id, amount, newBalance, description || 'Manual Recharge', req.user ? req.user.id : null]);
+
+        return resp(res, '200', { message: 'Wallet recharged successfully', newBalance });
+    } catch (err) {
+        console.error(err);
+        return resp(res, '500', err.message);
+    }
+});
+
+// ── GET /api/B2bClients/walletHistory/:id ────────────────────────────────
+router.get('/walletHistory/:id', authMiddleware, async (req, res) => {
+    try {
+        const { rows } = await query(`
+            SELECT * FROM b2b_wallet_transactions 
+            WHERE b2b_client_id = $1 
+            ORDER BY creation_timestamp DESC
+        `, [req.params.id]);
+        return resp(res, '200', rows);
+    } catch (err) {
+        console.error(err);
+        return resp(res, '500', err.message);
+    }
 });
 
 module.exports = router;
