@@ -24,7 +24,11 @@ const crudRoutes = (table, insertFields = []) => {
             const filterable = ['lab_test_id', 'drug_id', 'b2b_client_id', 'corporate_client_id', 'specimen_type_id', 'country_id', 'state_id', 'city_id', 'district_id'];
             for (const key of filterable) {
                 if (req.query[key] !== undefined) {
-                    whereClause += ` AND ${key} = $${index++}`;
+                    if (key === 'b2b_client_id') {
+                        whereClause += ` AND (${key} = $${index++} OR ${key} IS NULL)`;
+                    } else {
+                        whereClause += ` AND ${key} = $${index++}`;
+                    }
                     values.push(req.query[key]);
                 }
             }
