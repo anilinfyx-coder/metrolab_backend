@@ -4,13 +4,24 @@ const { query, queryOne } = require('../db');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
-// GET /api/WaitingList — all with patient info
+// GET /api/WaitingList — all with patient info + linked tests
 router.get('/', async (req, res) => {
     try {
         const { rows } = await query(`
-            SELECT wl.*, 
+            SELECT wl.*,
                    p.name as patient_name, p.mobile as patient_mobile, p.dob as patient_dob,
-                   p.ssn as patient_ssn, p.uid as patient_uid
+                   p.ssn as patient_ssn, p.uid as patient_uid,
+                   COALESCE((
+                     SELECT string_agg(lt.name, '. ' ORDER BY lt.id)
+                     FROM waiting_test_lab_test wtl
+                     JOIN lab_tests lt ON lt.id = wtl.lab_test_id
+                     WHERE wtl.waiting_list_id = wl.id AND wtl.deleted = false
+                   ), '') AS tests,
+                   COALESCE((
+                     SELECT COUNT(*)::int
+                     FROM waiting_test_lab_test wtl
+                     WHERE wtl.waiting_list_id = wl.id AND wtl.deleted = false
+                   ), 0) AS test_count
             FROM waiting_list wl
             LEFT JOIN patient p ON p.id = wl.patient_id
             WHERE wl.deleted = false
@@ -88,13 +99,31 @@ router.post('/', async (req, res) => {
             corporate_client_id, employee_id, lab_test_ids, user_id, role_type_id
         } = req.body;
 
+        let wlUid = uid;
+        let wlB2b = b2b_client_id;
+        let wlUserId = user_id;
+        let wlRoleType = role_type_id;
+
+        if (patient_id) {
+            const pat = await queryOne(
+                `SELECT uid, b2b_client_id, user_id, role_type_id FROM patient WHERE id = $1 LIMIT 1`,
+                [patient_id]
+            );
+            if (pat) {
+                if (!wlUid) wlUid = pat.uid;
+                if (!wlB2b) wlB2b = pat.b2b_client_id;
+                if (!wlUserId) wlUserId = pat.user_id;
+                if (!wlRoleType) wlRoleType = pat.role_type_id;
+            }
+        }
+
         const wl = await queryOne(
             `INSERT INTO waiting_list 
                 (patient_id, b2b_client_id, uid, reason_for_test, requisition_no,
                  corporate_client_id, employee_id, user_id, role_type_id, status, deleted, creation_timestamp)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true,false,NOW()) RETURNING *`,
-            [patient_id, b2b_client_id, uid, reason_for_test, requisition_no,
-             corporate_client_id, employee_id, user_id, role_type_id]
+            [patient_id, wlB2b, wlUid, reason_for_test, requisition_no,
+             corporate_client_id, employee_id, wlUserId, wlRoleType]
         );
 
         // Link lab tests
@@ -104,7 +133,7 @@ router.post('/', async (req, res) => {
                     `INSERT INTO waiting_test_lab_test 
                         (waiting_list_id, lab_test_id, b2b_client_id, status, deleted, creation_timestamp)
                      VALUES ($1,$2,$3,true,false,NOW())`,
-                    [wl.id, lab_test_id, b2b_client_id]
+                    [wl.id, lab_test_id, wlB2b]
                 );
             }
         }

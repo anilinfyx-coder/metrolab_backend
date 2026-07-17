@@ -10,19 +10,32 @@ router.use(authMiddleware);
 // GET all reports (replaces crudRoutes GET /)
 router.get('/', async (req, res) => {
     try {
-        let whereClause = "WHERE deleted = false";
+        let whereClause = 'WHERE r.deleted = false';
         const values = [];
         let index = 1;
-        
+
         const filterable = ['lab_test_id', 'drug_id', 'b2b_client_id', 'corporate_client_id', 'specimen_type_id'];
         for (const key of filterable) {
-            if (req.query[key] !== undefined) {
-                whereClause += ` AND ${key} = $${index++}`;
+            if (req.query[key] !== undefined && req.query[key] !== '') {
+                whereClause += ` AND r.${key} = $${index++}`;
                 values.push(req.query[key]);
             }
         }
 
-        const { rows } = await query(`SELECT * FROM lab_test_category_report ${whereClause} ORDER BY id DESC`, values);
+        const { rows } = await query(
+            `SELECT r.*,
+                    p.name as patient_name,
+                    p.email as patient_email,
+                    p.uid as patient_uid,
+                    l.name as lab_test_name,
+                    COALESCE(NULLIF(TRIM(r.uid), ''), p.uid) as uid
+             FROM lab_test_category_report r
+             LEFT JOIN patient p ON p.id = r.patient_id
+             LEFT JOIN lab_tests l ON l.id = r.lab_test_id
+             ${whereClause}
+             ORDER BY r.id DESC`,
+            values
+        );
         return resp(res, '200', rows);
     } catch (err) {
         return resp(res, '500', err.message);
@@ -67,63 +80,76 @@ router.put('/:id', async (req, res) => {
 router.post('/getLabTestCategoryReportDetails', async (req, res) => {
     try {
         const { id } = req.body;
-        
-        // 1. Fetch the report itself
+
         const report = await queryOne(`
-            SELECT r.*, l.name as lab_test_name 
+            SELECT r.*, l.name as lab_test_name
             FROM lab_test_category_report r
             LEFT JOIN lab_tests l ON r.lab_test_id = l.id
             WHERE r.id = $1
         `, [id]);
-        
+
         if (!report) {
             return res.status(404).json({ response_code: '404', obj: 'Report not found' });
         }
 
-        // 2. Fetch the lab test UI flags so the frontend knows what to render
         const labTest = await queryOne(`SELECT * FROM lab_tests WHERE id = $1`, [report.lab_test_id]);
         report.labTest = labTest;
 
-        // 3. Fetch questions and their answers for this report
-        // Using LEFT JOIN so we get the question even if there's no answer yet
         const questionsQuery = `
-            SELECT 
-                rq.id as report_questions_id,
+            SELECT
+                rq.id as report_question_id,
                 rq.question_text,
                 rq.description,
                 rq.answer_type,
                 rq.answer_option,
                 a.id as answer_id,
-                a.value as value
+                COALESCE(a.value, '') as value
             FROM report_questions rq
-            LEFT JOIN lab_test_category_report_question_answer a 
-                ON a.report_questions_id = rq.id AND a.lab_test_category_report_id = $1
+            LEFT JOIN lab_test_category_report_question_answer a
+                ON a.report_questions_id = rq.id
+               AND a.lab_test_category_report_id = $1
+               AND a.deleted = false
             WHERE rq.lab_test_id = $2 AND rq.deleted = false
             ORDER BY rq.id ASC
         `;
         const { rows: questions } = await query(questionsQuery, [id, report.lab_test_id]);
-        
         report.testReportQuestionList = questions;
 
-        // 4. Fetch parameters and their answers
-        const paramsQuery = `
-            SELECT 
+        const parametersQuery = `
+            SELECT
                 rp.id as report_request_parameters_id,
-                rp.name as reportRequestParameters,
+                rp.name,
+                rp.label,
                 rp.description,
-                rp.screening_cutoff as screeningCutoff,
-                rp.confirmation_cutoff as confirmationCutoff,
-                rp.unit_text as unitText,
+                rp.placeholder,
+                rp.input_type,
+                rp.input_option,
+                rp.unit_text,
+                rp.screening_cutoff,
+                rp.confirmation_cutoff,
+                rp.is_mandatory,
                 a.id as answer_id,
-                a.value
+                COALESCE(a.value, '') as value
             FROM report_request_parameters rp
-            LEFT JOIN lab_test_category_report_request_parameter_value a 
-                ON a.report_request_parameters_id = rp.id AND a.lab_test_category_report_id = $1
+            LEFT JOIN lab_test_category_report_request_parameter_value a
+                ON a.report_request_parameters_id = rp.id
+               AND a.lab_test_category_report_id = $1
+               AND a.deleted = false
             WHERE rp.lab_test_id = $2 AND rp.deleted = false
             ORDER BY rp.id ASC
         `;
-        const { rows: parameters } = await query(paramsQuery, [id, report.lab_test_id]);
+        const { rows: parameters } = await query(parametersQuery, [id, report.lab_test_id]);
         report.testResultParameterList = parameters;
+
+        const { rows: specimens } = await query(
+            `SELECT st.*
+             FROM lab_test_category_specimen_type_mapping m
+             JOIN specimen_type st ON st.id = m.specimen_type_id
+             WHERE m.lab_test_id = $1 AND m.deleted = false AND st.deleted = false
+             ORDER BY st.name ASC`,
+            [report.lab_test_id]
+        );
+        report.specimenTypeList = specimens;
 
         return resp(res, '200', report);
     } catch (err) {
@@ -138,42 +164,54 @@ router.post('/saveLabTestCategoryReport', async (req, res) => {
         const data = req.body;
         const id = data.id;
 
-        // 1. Update the main report fields
+        const combineDateTime = (dateVal, timeVal, fallback) => {
+            if (dateVal && timeVal) return `${dateVal} ${timeVal}`;
+            if (dateVal) return dateVal;
+            if (fallback) return fallback;
+            return null;
+        };
+
+        const collectedTs = combineDateTime(data.collected_date, data.collected_time, data.collected_timestamp);
+        const receivedTs = combineDateTime(data.received_date, data.received_time, data.received_timestamp);
+        const reportedTs = combineDateTime(data.reported_date, data.reported_time, data.reported_timestamp);
+
         await queryOne(`
-            UPDATE lab_test_category_report 
-            SET 
-                specimen_type_id = $1,
-                collected_timestamp = $2,
-                received_timestamp = $3,
-                reported_timestamp = $4,
-                date_of_test = $5,
-                test_performed_by = $6,
-                reason_for_test = $7,
-                final_result = $8,
-                test_remark = $9,
-                report_status = $10,
-                final_remark = $11,
-                test_result = $12,
-                fasting = $13,
-                requisition_no = $14,
-                device_identifier = $15,
-                date_administered = $16,
-                applied_to_arm = $17,
-                lot = $18,
-                expiry_date = $19,
-                date_read = $20,
-                mm_indurations = $21,
-                follow_up = $22,
-                reference_range_note = $23,
-                clinical_significance_note = $24,
-                result_interpretation_note = $25,
-                final_result_disposition = $26
-            WHERE id = $27
+            UPDATE lab_test_category_report
+            SET
+                regulation = COALESCE($1, regulation),
+                specimen_type_id = $2,
+                collected_timestamp = $3,
+                received_timestamp = $4,
+                reported_timestamp = $5,
+                date_of_test = $6,
+                test_performed_by = $7,
+                reason_for_test = $8,
+                final_result = $9,
+                test_remark = $10,
+                report_status = $11,
+                final_remark = $12,
+                test_result = $13,
+                fasting = COALESCE($14, fasting),
+                requisition_no = COALESCE($15, requisition_no),
+                device_identifier = COALESCE($16, device_identifier),
+                lot = COALESCE($17, lot),
+                expiry_date = $18,
+                date_read = $19,
+                mm_indurations = COALESCE($20, mm_indurations),
+                follow_up = COALESCE($21, follow_up),
+                final_result_disposition = COALESCE($22, final_result_disposition),
+                date_administered = $23,
+                applied_to_arm = COALESCE($24, applied_to_arm),
+                reference_range_note = COALESCE($25, reference_range_note),
+                clinical_significance_note = COALESCE($26, clinical_significance_note),
+                result_interpretation_note = COALESCE($27, result_interpretation_note)
+            WHERE id = $28
         `, [
+            data.regulation || null,
             data.specimen_type_id || null,
-            data.collected_timestamp || null,
-            data.received_timestamp || null,
-            data.reported_timestamp || null,
+            collectedTs,
+            receivedTs,
+            reportedTs,
             data.date_of_test || null,
             data.test_performed_by || null,
             data.reason_for_test || null,
@@ -182,6 +220,20 @@ router.post('/saveLabTestCategoryReport', async (req, res) => {
             data.report_status || null,
             data.final_remark || null,
             data.test_result || null,
+            data.fasting || null,
+            data.requisition_no || null,
+            data.device_identifier || null,
+            data.lot || null,
+            data.expiry_date || null,
+            data.date_read || null,
+            data.mm_indurations || null,
+            data.follow_up || null,
+            data.final_result_disposition || null,
+            data.date_administered || null,
+            data.applied_to_arm || null,
+            data.reference_range_note || null,
+            data.clinical_significance_note || null,
+            data.result_interpretation_note || null,
             data.fasting || null,
             data.requisition_no || null,
             data.device_identifier || null,
@@ -199,16 +251,18 @@ router.post('/saveLabTestCategoryReport', async (req, res) => {
             id
         ]);
 
-        // 2. Save questions
         if (data.testReportQuestionList && data.testReportQuestionList.length > 0) {
             for (const q of data.testReportQuestionList) {
-                // Check if answer already exists
-                const existing = await queryOne(`
-                    SELECT id FROM lab_test_category_report_question_answer 
-                    WHERE lab_test_category_report_id = $1 AND report_questions_id = $2
-                `, [id, q.report_question_id]);
+                const questionId = q.report_question_id || q.report_questions_id;
+                if (!questionId) continue;
 
-                // Some boolean answers might be sent as boolean, cast to string
+                const existing = await queryOne(`
+                    SELECT id FROM lab_test_category_report_question_answer
+                    WHERE lab_test_category_report_id = $1 AND report_questions_id = $2
+                      AND deleted = false
+                    LIMIT 1
+                `, [id, questionId]);
+
                 let stringVal = q.value;
                 if (stringVal !== null && stringVal !== undefined) {
                     stringVal = stringVal.toString();
@@ -218,17 +272,53 @@ router.post('/saveLabTestCategoryReport', async (req, res) => {
 
                 if (existing) {
                     await queryOne(`
-                        UPDATE lab_test_category_report_question_answer 
-                        SET value = $1 
+                        UPDATE lab_test_category_report_question_answer
+                        SET value = $1
                         WHERE id = $2
                     `, [stringVal, existing.id]);
                 } else {
                     await queryOne(`
                         INSERT INTO lab_test_category_report_question_answer (
-                            lab_test_category_report_id, report_questions_id, value, 
-                            creation_timestamp, created_by_id
-                        ) VALUES ($1, $2, $3, NOW(), $4)
-                    `, [id, q.report_question_id, stringVal, req.user.id]);
+                            lab_test_category_report_id, report_questions_id, value,
+                            creation_timestamp, created_by_id, status, deleted
+                        ) VALUES ($1, $2, $3, NOW(), $4, true, false)
+                    `, [id, questionId, stringVal, req.user.id]);
+                }
+            }
+        }
+
+        if (data.testResultParameterList && data.testResultParameterList.length > 0) {
+            for (const p of data.testResultParameterList) {
+                const paramId = p.report_request_parameters_id || p.id;
+                if (!paramId) continue;
+
+                const existing = await queryOne(`
+                    SELECT id FROM lab_test_category_report_request_parameter_value
+                    WHERE lab_test_category_report_id = $1 AND report_request_parameters_id = $2
+                      AND deleted = false
+                    LIMIT 1
+                `, [id, paramId]);
+
+                let stringVal = p.value;
+                if (stringVal !== null && stringVal !== undefined) {
+                    stringVal = stringVal.toString();
+                } else {
+                    stringVal = '';
+                }
+
+                if (existing) {
+                    await queryOne(`
+                        UPDATE lab_test_category_report_request_parameter_value
+                        SET value = $1
+                        WHERE id = $2
+                    `, [stringVal, existing.id]);
+                } else {
+                    await queryOne(`
+                        INSERT INTO lab_test_category_report_request_parameter_value (
+                            lab_test_category_report_id, report_request_parameters_id, value,
+                            creation_timestamp, created_by_id, status, deleted
+                        ) VALUES ($1, $2, $3, NOW(), $4, true, false)
+                    `, [id, paramId, stringVal, req.user.id]);
                 }
             }
         }
@@ -282,6 +372,63 @@ router.post('/changeLabTestCategoryReportStatus', async (req, res) => {
     } catch (err) {
         console.error(err);
         return resp(res, '500', err.message);
+    }
+});
+
+// POST downloadLabTestCategoryReport — simple PDF download
+router.post('/downloadLabTestCategoryReport', async (req, res) => {
+    try {
+        const PDFDocument = require('pdfkit');
+        const { id } = req.body;
+
+        const report = await queryOne(
+            `SELECT r.*,
+                    p.name as patient_name,
+                    p.uid as patient_uid,
+                    p.email as patient_email,
+                    p.mobile as patient_mobile,
+                    l.name as lab_test_name
+             FROM lab_test_category_report r
+             LEFT JOIN patient p ON p.id = r.patient_id
+             LEFT JOIN lab_tests l ON l.id = r.lab_test_id
+             WHERE r.id = $1
+             LIMIT 1`,
+            [id]
+        );
+
+        if (!report) {
+            return res.status(404).json({ response_code: '404', obj: 'Report not found' });
+        }
+
+        const doc = new PDFDocument({ margin: 50 });
+        const filename = `${report.uid || `Report-${report.id}`}.pdf`;
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+        doc.pipe(res);
+
+        doc.fontSize(18).text('Lab Test Report', { align: 'center' });
+        doc.moveDown();
+        doc.fontSize(12);
+        doc.text(`UID: ${report.uid || '—'}`);
+        doc.text(`Test: ${report.lab_test_name || '—'}`);
+        doc.text(`Patient/Donor: ${report.patient_name || '—'}`);
+        doc.text(`Patient UID: ${report.patient_uid || '—'}`);
+        doc.text(`Mobile: ${report.patient_mobile || '—'}`);
+        doc.text(`Email: ${report.patient_email || '—'}`);
+        doc.moveDown();
+        doc.text(`Creation: ${report.creation_timestamp ? new Date(report.creation_timestamp).toLocaleString() : '—'}`);
+        doc.text(`Reason for Test: ${report.reason_for_test || '—'}`);
+        doc.text(`Final Result: ${report.final_result || '—'}`);
+        doc.text(`Report Status: ${report.report_status || '—'}`);
+        doc.text(`Collected: ${report.collected_timestamp ? new Date(report.collected_timestamp).toLocaleString() : '—'}`);
+        doc.text(`Received: ${report.received_timestamp ? new Date(report.received_timestamp).toLocaleString() : '—'}`);
+        doc.text(`Reported: ${report.reported_timestamp ? new Date(report.reported_timestamp).toLocaleString() : '—'}`);
+        doc.end();
+    } catch (err) {
+        console.error(err);
+        if (!res.headersSent) {
+            return res.status(500).json({ response_code: '500', obj: err.message });
+        }
     }
 });
 
