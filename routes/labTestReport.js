@@ -68,7 +68,7 @@ router.post('/', async (req, res) => {
                 $20, $21, $22, $23,
                 $24, $25,
                 $26, $27, $28,
-                $29, true, false, NOW()
+                $29, false, false, NOW()
             ) RETURNING *`,
             [
                 reportUid, wl.patient_id, lab_test_id, waiting_list_id,
