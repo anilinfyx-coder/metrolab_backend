@@ -76,12 +76,15 @@ router.get('/:id', async (req, res) => {
             );
             tests[i].testResultParameterList = parameters;
 
-            // Get mapped specimen types
+            // Get mapped specimen types (linked via specimen_type_drug_linking on lab_test_id)
             const { rows: specimens } = await query(
-                `SELECT st.* 
-                 FROM lab_test_category_specimen_type_mapping m
-                 JOIN specimen_type st ON st.id = m.specimen_type_id
-                 WHERE m.lab_test_id = $1 AND m.deleted = false`,
+                `SELECT DISTINCT st.*
+                 FROM specimen_type_drug_linking stdl
+                 JOIN specimen_type st ON st.id = stdl.specimen_type_id
+                 WHERE stdl.lab_test_id = $1
+                   AND stdl.deleted = false
+                   AND st.deleted = false
+                 ORDER BY st.name ASC`,
                 [testId]
             );
             tests[i].specimenTypeList = specimens;
