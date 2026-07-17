@@ -51,6 +51,7 @@ app.use('/api/LabTestCategoryReport', require('./routes/labTestCategoryReport'))
 app.use('/api/ReportQuestions', crudRoutes('report_questions'));
 app.use('/api/TestRequest', require('./routes/testRequestBulk'));
 app.use('/api/ReportRequestParameters', crudRoutes('report_request_parameters'));
+app.use('/api/GlobalSettings', require('./routes/globalSettings'));
 app.use('/api/Country', crudRoutes('country'));
 app.use('/api/State', crudRoutes('state'));
 app.use('/api/City', crudRoutes('city'));
