@@ -142,10 +142,10 @@ router.post('/getLabTestCategoryReportDetails', async (req, res) => {
         report.testResultParameterList = parameters;
 
         const { rows: specimens } = await query(
-            `SELECT st.*
-             FROM lab_test_category_specimen_type_mapping m
-             JOIN specimen_type st ON st.id = m.specimen_type_id
-             WHERE m.lab_test_id = $1 AND m.deleted = false AND st.deleted = false
+            `SELECT DISTINCT st.*
+             FROM specimen_type_drug_linking stdl
+             JOIN specimen_type st ON st.id = stdl.specimen_type_id
+             WHERE stdl.lab_test_id = $1 AND stdl.deleted = false AND st.deleted = false
              ORDER BY st.name ASC`,
             [report.lab_test_id]
         );
@@ -234,20 +234,6 @@ router.post('/saveLabTestCategoryReport', async (req, res) => {
             data.reference_range_note || null,
             data.clinical_significance_note || null,
             data.result_interpretation_note || null,
-            data.fasting || null,
-            data.requisition_no || null,
-            data.device_identifier || null,
-            data.date_administered || null,
-            data.applied_to_arm || null,
-            data.lot || null,
-            data.expiry_date || null,
-            data.date_read || null,
-            data.mm_indurations || null,
-            data.follow_up || null,
-            data.reference_range_note || null,
-            data.clinical_significance_note || null,
-            data.result_interpretation_note || null,
-            data.final_result_disposition || null,
             id
         ]);
 
@@ -319,38 +305,6 @@ router.post('/saveLabTestCategoryReport', async (req, res) => {
                             creation_timestamp, created_by_id, status, deleted
                         ) VALUES ($1, $2, $3, NOW(), $4, true, false)
                     `, [id, paramId, stringVal, req.user.id]);
-                }
-            }
-        }
-
-        // 3. Save parameters
-        if (data.testResultParameterList && data.testResultParameterList.length > 0) {
-            for (const p of data.testResultParameterList) {
-                const existing = await queryOne(`
-                    SELECT id FROM lab_test_category_report_request_parameter_value 
-                    WHERE lab_test_category_report_id = $1 AND report_request_parameters_id = $2
-                `, [id, p.report_request_parameters_id]);
-
-                let stringVal = p.value;
-                if (stringVal !== null && stringVal !== undefined) {
-                    stringVal = stringVal.toString();
-                } else {
-                    stringVal = '';
-                }
-
-                if (existing) {
-                    await queryOne(`
-                        UPDATE lab_test_category_report_request_parameter_value 
-                        SET value = $1 
-                        WHERE id = $2
-                    `, [stringVal, existing.id]);
-                } else {
-                    await queryOne(`
-                        INSERT INTO lab_test_category_report_request_parameter_value (
-                            lab_test_category_report_id, report_request_parameters_id, value, 
-                            creation_timestamp, created_by_id
-                        ) VALUES ($1, $2, $3, NOW(), $4)
-                    `, [id, p.report_request_parameters_id, stringVal, req.user.id]);
                 }
             }
         }
