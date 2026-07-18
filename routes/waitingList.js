@@ -31,6 +31,48 @@ router.get('/', async (req, res) => {
     } catch (err) { return resp(res, '500', err.message); }
 });
 
+// GET /api/WaitingList/patient/:patientId/history
+// One row per assigned test, including the generated report when available.
+router.get('/patient/:patientId/history', async (req, res) => {
+    try {
+        const { rows } = await query(
+            `SELECT
+                wtl.id,
+                wl.id AS waiting_list_id,
+                wl.creation_timestamp,
+                wl.reason_for_test,
+                lt.id AS lab_test_id,
+                lt.name AS lab_test_name,
+                report.id AS report_id,
+                report.uid AS report_uid,
+                report.status AS report_status
+             FROM waiting_list wl
+             JOIN waiting_test_lab_test wtl
+               ON wtl.waiting_list_id = wl.id
+              AND wtl.deleted = false
+             JOIN lab_tests lt
+               ON lt.id = wtl.lab_test_id
+              AND lt.deleted = false
+             LEFT JOIN LATERAL (
+                SELECT r.id, r.uid, r.status
+                FROM lab_test_category_report r
+                WHERE r.waiting_list_id = wl.id
+                  AND r.lab_test_id = wtl.lab_test_id
+                  AND r.deleted = false
+                ORDER BY r.id DESC
+                LIMIT 1
+             ) report ON true
+             WHERE wl.patient_id = $1
+               AND wl.deleted = false
+             ORDER BY wl.creation_timestamp DESC, wtl.id DESC`,
+            [req.params.patientId]
+        );
+        return resp(res, '200', rows);
+    } catch (err) {
+        return resp(res, '500', err.message);
+    }
+});
+
 // GET /api/WaitingList/:id
 router.get('/:id', async (req, res) => {
     try {
