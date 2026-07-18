@@ -329,60 +329,66 @@ router.post('/changeLabTestCategoryReportStatus', async (req, res) => {
     }
 });
 
-// POST downloadLabTestCategoryReport — simple PDF download
+// POST downloadLabTestCategoryReport — formatted PDF (no password on download)
 router.post('/downloadLabTestCategoryReport', async (req, res) => {
     try {
-        const PDFDocument = require('pdfkit');
+        const { buildLabTestReportPdf } = require('../utils/labTestReportPdf');
         const { id } = req.body;
+        if (!id) return res.status(400).json({ response_code: '400', obj: 'Report id is required' });
 
-        const report = await queryOne(
-            `SELECT r.*,
-                    p.name as patient_name,
-                    p.uid as patient_uid,
-                    p.email as patient_email,
-                    p.mobile as patient_mobile,
-                    l.name as lab_test_name
-             FROM lab_test_category_report r
-             LEFT JOIN patient p ON p.id = r.patient_id
-             LEFT JOIN lab_tests l ON l.id = r.lab_test_id
-             WHERE r.id = $1
-             LIMIT 1`,
-            [id]
-        );
-
-        if (!report) {
-            return res.status(404).json({ response_code: '404', obj: 'Report not found' });
-        }
-
-        const doc = new PDFDocument({ margin: 50 });
-        const filename = `${report.uid || `Report-${report.id}`}.pdf`;
+        const pdf = await buildLabTestReportPdf(id, { encrypt: false });
         res.setHeader('Content-Type', 'application/pdf');
-        res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
-        doc.pipe(res);
-
-        doc.fontSize(18).text('Lab Test Report', { align: 'center' });
-        doc.moveDown();
-        doc.fontSize(12);
-        doc.text(`UID: ${report.uid || '—'}`);
-        doc.text(`Test: ${report.lab_test_name || '—'}`);
-        doc.text(`Patient/Donor: ${report.patient_name || '—'}`);
-        doc.text(`Patient UID: ${report.patient_uid || '—'}`);
-        doc.text(`Mobile: ${report.patient_mobile || '—'}`);
-        doc.text(`Email: ${report.patient_email || '—'}`);
-        doc.moveDown();
-        doc.text(`Creation: ${report.creation_timestamp ? new Date(report.creation_timestamp).toLocaleString() : '—'}`);
-        doc.text(`Reason for Test: ${report.reason_for_test || '—'}`);
-        doc.text(`Final Result: ${report.final_result || '—'}`);
-        doc.text(`Report Status: ${report.report_status || '—'}`);
-        doc.text(`Collected: ${report.collected_timestamp ? new Date(report.collected_timestamp).toLocaleString() : '—'}`);
-        doc.text(`Received: ${report.received_timestamp ? new Date(report.received_timestamp).toLocaleString() : '—'}`);
-        doc.text(`Reported: ${report.reported_timestamp ? new Date(report.reported_timestamp).toLocaleString() : '—'}`);
-        doc.end();
+        res.setHeader('Content-Disposition', `attachment; filename=${pdf.filename}`);
+        return res.send(pdf.buffer);
     } catch (err) {
         console.error(err);
         if (!res.headersSent) {
-            return res.status(500).json({ response_code: '500', obj: err.message });
+            const code = err.code === '404' ? 404 : 500;
+            return res.status(code).json({ response_code: String(code), obj: err.message });
         }
+    }
+});
+
+// POST emailLabTestCategoryReport — email password-protected PDF to patient
+router.post('/emailLabTestCategoryReport', async (req, res) => {
+    try {
+        const { buildLabTestReportPdf } = require('../utils/labTestReportPdf');
+        const { sendLabTestCategoryReportMail } = require('../utils/emailService');
+        const { id } = req.body;
+        if (!id) return resp(res, '400', 'Report id is required');
+
+        const pdf = await buildLabTestReportPdf(id, { encrypt: true });
+        const to = (pdf.report.patient_email || '').trim();
+        if (!to) return resp(res, '400', 'No email address found for this patient');
+
+        if (!pdf.password) {
+            return resp(res, '400', 'Patient date of birth is required to password-protect the PDF');
+        }
+
+        const ok = await sendLabTestCategoryReportMail(
+            to,
+            pdf.report.patient_name,
+            pdf.report.lab_test_name,
+            pdf.report.uid,
+            pdf.buffer,
+            pdf.filename
+        );
+
+        if (!ok) return resp(res, '500', 'Failed to send email via SMTP');
+
+        await queryOne(
+            `UPDATE lab_test_category_report SET is_email_send = true WHERE id = $1`,
+            [id]
+        ).catch(() => null);
+
+        return resp(res, '200', {
+            message: 'Report emailed successfully',
+            email: to,
+        });
+    } catch (err) {
+        console.error(err);
+        if (err.code === '404') return resp(res, '404', 'Report not found');
+        return resp(res, '500', err.message);
     }
 });
 

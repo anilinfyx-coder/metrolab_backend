@@ -139,10 +139,39 @@ const sendTestRequestEmployeeReportMail = async (to, employeeName, testTitle, pd
     return sendMail(to, subject, html, [{ filename: pdfFilename, content: pdfBuffer }]);
 };
 
+const sendLabTestCategoryReportMail = async (to, patientName, testName, reportUid, pdfBuffer, pdfFilename) => {
+    const subject = `Lab Test Report: ${testName || 'Report'} (${reportUid || ''})`;
+    const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+            ${getEmailHeader()}
+            <h2 style="color: #2980b9; text-align: center; margin-top: 0;">Your Lab Test Report</h2>
+            <p>Dear ${patientName || 'Patient'},</p>
+            <p>Please find your lab test report attached to this email.</p>
+            <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                <p style="margin: 0;"><strong>Test:</strong> ${testName || '—'}</p>
+                <p style="margin: 10px 0 0 0;"><strong>Report UID:</strong> ${reportUid || '—'}</p>
+            </div>
+            <div style="background-color: #fff8e6; padding: 15px; border-radius: 5px; margin: 20px 0; border: 1px solid #f0e0b2;">
+                <p style="margin: 0; color: #8a6d1d;"><strong>PDF Password:</strong></p>
+                <p style="margin: 8px 0 0 0;">To open the attached PDF, use your <strong>birthdate 4 digits</strong> as the password.</p>
+                <p style="margin: 8px 0 0 0; font-size: 13px; color: #666;">Format: <strong>MMDD</strong> (Month + Day), for example if DOB is 9/9/2003, password is <strong>0909</strong>.</p>
+            </div>
+            <p>Best Regards,</p>
+            <p><strong>The Metrolab Team</strong></p>
+        </div>
+    `;
+    return sendMail(to, subject, html, [{
+        filename: pdfFilename,
+        content: pdfBuffer,
+        contentType: 'application/pdf',
+    }]);
+};
+
 module.exports = {
     sendWelcomeB2BMail,
     sendWelcomeCorporateMail,
     sendSubscriptionPurchaseMail,
     sendLabNotificationMail,
-    sendTestRequestEmployeeReportMail
+    sendTestRequestEmployeeReportMail,
+    sendLabTestCategoryReportMail,
 };

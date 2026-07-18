@@ -442,6 +442,8 @@ CREATE TABLE IF NOT EXISTS lab_tests (
     created_by_id                INT,
     name                         VARCHAR(255) NOT NULL,
     description                  TEXT,
+    cost                         NUMERIC(12, 2),
+    cpt_code                     VARCHAR(100),
     show_collected_date          BOOLEAN DEFAULT FALSE,
     show_collected_time          BOOLEAN DEFAULT FALSE,
     show_received_date           BOOLEAN DEFAULT FALSE,
