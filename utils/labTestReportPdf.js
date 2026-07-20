@@ -129,10 +129,12 @@ async function loadLabTestReportBundle(reportId) {
                 p.state as patient_state,
                 p.zipcode as patient_zipcode,
                 p.b2b_client_id as patient_b2b_client_id,
+                wl.b2b_client_id as waiting_list_b2b_client_id,
                 l.name as lab_test_name,
                 st.name as specimen_type_name
          FROM lab_test_category_report r
          LEFT JOIN patient p ON p.id = r.patient_id
+         LEFT JOIN waiting_list wl ON wl.id = r.waiting_list_id
          LEFT JOIN lab_tests l ON l.id = r.lab_test_id
          LEFT JOIN specimen_type st ON st.id = r.specimen_type_id
          WHERE r.id = $1 AND r.deleted = false
@@ -141,12 +143,15 @@ async function loadLabTestReportBundle(reportId) {
     );
     if (!report) return null;
 
-    const b2bClientId = report.patient_b2b_client_id || null;
+    const b2bClientId =
+        report.patient_b2b_client_id ||
+        report.waiting_list_b2b_client_id ||
+        null;
     const b2b = b2bClientId
         ? await queryOne(
             `SELECT company_name, tagline, public_phone_no, public_fax, public_email, email,
                     address, medical_officer_name, mrocc, clia_number,
-                    medical_officer_signature_file_name
+                    medical_officer_signature_file_name, logo_file, report_header_file
              FROM b2b_clients WHERE id = $1 LIMIT 1`,
             [b2bClientId]
         )
@@ -172,9 +177,279 @@ async function loadLabTestReportBundle(reportId) {
     return { report, b2b, parameters };
 }
 
+const DEFAULT_LOGO_PATH = path.join(__dirname, '..', 'assets', 'metrolab-logo.png');
+
+function resolveUploadedImagePath(filename) {
+    if (!filename) return null;
+    const clean = String(filename).trim();
+    const normalized = clean.replace(/\\/g, '/');
+    const baseName = path.basename(normalized);
+    const bases = [
+        path.join(__dirname, '..'),
+        path.join(__dirname, '..', 'uploads', 'b2bClients'),
+        path.join(__dirname, '..', 'Uploads', 'b2bClients'),
+    ];
+
+    const candidates = [
+        clean,
+        normalized,
+        baseName,
+        path.join('uploads', 'b2bClients', baseName),
+        path.join('Uploads', 'b2bClients', baseName),
+    ];
+
+    for (const candidate of candidates) {
+        if (!candidate) continue;
+        if (path.isAbsolute(candidate) && fs.existsSync(candidate)) return candidate;
+        for (const base of bases) {
+            const full = path.join(base, candidate);
+            if (fs.existsSync(full)) return full;
+        }
+    }
+    return null;
+}
+
+function resolveReportLogoPath(b2b) {
+    const uploadedLogo =
+        resolveUploadedImagePath(b2b?.logo_file) ||
+        resolveUploadedImagePath(b2b?.report_header_file);
+    if (uploadedLogo && !uploadedLogo.toLowerCase().endsWith('.webp')) {
+        return uploadedLogo;
+    }
+    if (fs.existsSync(DEFAULT_LOGO_PATH)) return DEFAULT_LOGO_PATH;
+    return null;
+}
+
+function drawContactLine(doc, x, y, width, text) {
+    doc.font('Helvetica').fontSize(9).fillColor('#222').text(text, x, y, { width, align: 'right' });
+    return y + 12;
+}
+
 function drawLabelValue(doc, x, y, label, value, labelWidth = 130) {
     doc.font('Helvetica-Bold').fontSize(9).fillColor('#222').text(label, x, y, { width: labelWidth, continued: false });
     doc.font('Helvetica').fontSize(9).fillColor('#222').text(value || '—', x + labelWidth, y, { width: 160 });
+    return y + 16;
+}
+
+function drawReportHeader(doc, bundle) {
+    const { report, b2b } = bundle;
+    const left = 40;
+    const right = doc.page.width - 40;
+    const contentWidth = right - left;
+    const contactX = left + 270;
+    const contactWidth = contentWidth - 270;
+
+    let headerBottom = 40;
+    const logoPath = resolveReportLogoPath(b2b);
+
+    if (logoPath) {
+        try {
+            doc.image(logoPath, left, 34, { fit: [170, 78] });
+            headerBottom = 34 + 78;
+        } catch (err) {
+            console.warn('Could not embed report logo:', err.message);
+            doc.font('Helvetica-Bold').fontSize(18).fillColor('#1a5f9e')
+                .text(b2b?.company_name || 'METRO LAB', left, 40, { width: 260 });
+            if (b2b?.tagline) {
+                doc.font('Helvetica').fontSize(8).fillColor('#555')
+                    .text(b2b.tagline, left, 62, { width: 260 });
+            }
+            headerBottom = 78;
+        }
+    } else {
+        doc.font('Helvetica-Bold').fontSize(18).fillColor('#1a5f9e')
+            .text(b2b?.company_name || 'METRO LAB', left, 40, { width: 260 });
+        if (b2b?.tagline) {
+            doc.font('Helvetica').fontSize(8).fillColor('#555')
+                .text(b2b.tagline, left, 62, { width: 260 });
+        }
+        headerBottom = 78;
+    }
+
+    let cy = 38;
+    const fax = b2b?.public_fax || '';
+    const phone = b2b?.public_phone_no || '';
+    const email = b2b?.public_email || b2b?.email || '';
+    const address = b2b?.address || '';
+
+    if (fax) cy = drawContactLine(doc, contactX, cy, contactWidth, `FAX : ${fax}`);
+    if (phone) cy = drawContactLine(doc, contactX, cy, contactWidth, `Phone Number : ${phone}`);
+    if (email) cy = drawContactLine(doc, contactX, cy, contactWidth, `Email : ${email}`);
+    if (address) cy = drawContactLine(doc, contactX, cy, contactWidth, address);
+
+    let y = Math.max(headerBottom + 12, cy + 6);
+
+    doc.font('Helvetica-Bold').fontSize(14).fillColor('#111')
+        .text(report.lab_test_name || 'Lab Test Report', left, y, { width: contentWidth, align: 'center' });
+    y += 22;
+
+    doc.font('Helvetica-Bold').fontSize(9).fillColor('#222')
+        .text(`Report Printed On: ${formatUsDateTime(new Date())}`, left, y, { width: contentWidth, align: 'right' });
+    y += 16;
+
+    doc.moveTo(left, y).lineTo(right, y).strokeColor('#000').lineWidth(1).stroke();
+    y += 12;
+
+    const mid = left + contentWidth / 2 + 10;
+    let yL = y;
+    let yR = y;
+    yL = drawLabelValue(doc, left, yL, 'UID:', `#${report.uid || report.id}`);
+    yL = drawLabelValue(doc, left, yL, 'Test Performed by:', report.test_performed_by || '—');
+    yL = drawLabelValue(doc, left, yL, 'Medical Officer:', b2b?.medical_officer_name || '—');
+
+    yR = drawLabelValue(doc, mid, yR, 'Reason for Test:', report.reason_for_test || '—');
+    yR = drawLabelValue(doc, mid, yR, 'Reported Status:', report.report_status || '—');
+    yR = drawLabelValue(doc, mid, yR, 'Regulation:', report.regulation || '—');
+
+    return Math.max(yL, yR) + 14;
+}
+
+function drawBoldInlineField(doc, x, y, label, value, width = 500) {
+    doc.font('Helvetica-Bold').fontSize(9).fillColor('#222').text(label, x, y, { width, continued: true });
+    doc.font('Helvetica').fontSize(9).fillColor('#222').text(` ${value || '—'}`);
+    return y + 16;
+}
+
+function drawDrugsTestedSection(doc, bundle, startY) {
+    const { parameters } = bundle;
+    const left = 40;
+    const right = doc.page.width - 40;
+    const contentWidth = right - left;
+    let y = startY + 12;
+
+    if (!parameters || parameters.length === 0) return startY;
+
+    doc.moveTo(left, y).lineTo(right, y).strokeColor('#000').lineWidth(1).stroke();
+    y += 10;
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#111')
+        .text('Drugs Tested', left, y, { width: contentWidth, align: 'center' });
+    y += 16;
+    doc.moveTo(left, y).lineTo(right, y).strokeColor('#000').lineWidth(1).stroke();
+    y += 8;
+
+    const cols = [
+        { title: 'Drug Name', w: 185 },
+        { title: 'Result', w: 70 },
+        { title: 'Laboratory Screening Cutoff*', w: 138 },
+        { title: 'Laboratory Confirmation Cutoff*', w: contentWidth - 185 - 70 - 138 },
+    ];
+    const rowH = 16;
+
+    doc.font('Helvetica-Bold').fontSize(8).fillColor('#111');
+    let x = left + 4;
+    cols.forEach((c) => {
+        doc.text(c.title, x, y + 3, { width: c.w - 8 });
+        x += c.w;
+    });
+    y += rowH;
+    doc.moveTo(left, y).lineTo(right, y).strokeColor('#000').lineWidth(0.5).stroke();
+
+    parameters.forEach((p) => {
+        if (y > doc.page.height - 220) {
+            doc.addPage();
+            y = 40;
+        }
+        const vals = [
+            p.label || '—',
+            p.value || '—',
+            formatCutoff(p.screening_cutoff, p.unit_text),
+            formatCutoff(p.confirmation_cutoff, p.unit_text),
+        ];
+        doc.font('Helvetica').fontSize(8).fillColor('#222');
+        x = left + 4;
+        vals.forEach((v, i) => {
+            doc.text(String(v), x, y + 3, { width: cols[i].w - 8 });
+            x += cols[i].w;
+        });
+        y += rowH;
+        doc.moveTo(left, y).lineTo(right, y).strokeColor('#000').lineWidth(0.5).stroke();
+    });
+
+    return y + 18;
+}
+
+function drawMroSection(doc, bundle, startY) {
+    const { report } = bundle;
+    const left = 40;
+    const right = doc.page.width - 40;
+    const contentWidth = right - left;
+    let y = startY + 16;
+
+    if (y > doc.page.height - 220) {
+        doc.addPage();
+        y = 40;
+    }
+
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#111')
+        .text('To Be Completed By Medical Review Officer', left, y, { width: contentWidth, align: 'center' });
+    y += 22;
+
+    doc.font('Helvetica').fontSize(9).fillColor('#222')
+        .text(
+            'I have reviewed the laboratory result for the specimen identified by this form in accordance with applicable federal requirements. My determination / verification is',
+            left,
+            y,
+            { width: contentWidth, align: 'left' }
+        );
+    y += 34;
+
+    y = drawBoldInlineField(doc, left, y, 'Final Result :', report.final_result || '—', contentWidth);
+    y = drawBoldInlineField(doc, left, y, 'Remark :', report.test_remark || '—', contentWidth);
+    y = drawBoldInlineField(doc, left, y, 'Final Result Disposition:', report.final_result_disposition || '—', contentWidth);
+    y = drawBoldInlineField(doc, left, y, 'Final Remark:', report.final_remark || '—', contentWidth);
+
+    return y + 20;
+}
+
+function drawReportFooter(doc, bundle, startY) {
+    const { report, b2b } = bundle;
+    const left = 40;
+    const right = doc.page.width - 40;
+    const contentWidth = right - left;
+    let y = startY + 10;
+
+    if (y > doc.page.height - 130) {
+        doc.addPage();
+        y = 40;
+    }
+
+    doc.moveTo(left, y).lineTo(right, y).strokeColor('#000').lineWidth(1).stroke();
+    y += 18;
+
+    const colW = contentWidth / 3;
+    const officerName = b2b?.medical_officer_name || '—';
+    const reportDate = formatUsDateShort(report.reported_timestamp || new Date());
+    const sigPath = resolveUploadedImagePath(b2b?.medical_officer_signature_file_name);
+
+    const valueY = y;
+    const labelY = y + 34;
+
+    doc.font('Helvetica').fontSize(9).fillColor('#222')
+        .text(officerName, left, valueY, { width: colW, align: 'center' });
+
+    if (sigPath && !sigPath.toLowerCase().endsWith('.webp')) {
+        try {
+            doc.image(sigPath, left + colW + (colW - 110) / 2, valueY - 4, { fit: [110, 28] });
+        } catch (err) {
+            console.warn('Could not embed medical officer signature:', err.message);
+        }
+    }
+
+    doc.font('Helvetica').fontSize(9).fillColor('#222')
+        .text(reportDate, left + colW * 2, valueY, { width: colW, align: 'center' });
+
+    doc.font('Helvetica-Bold').fontSize(8).fillColor('#111')
+        .text("Medical Review Officer's Name", left, labelY, { width: colW, align: 'center' });
+    doc.text('Signature of Medical Review Officer', left + colW, labelY, { width: colW, align: 'center' });
+    doc.text('Date (MM/DD/YY)', left + colW * 2, labelY, { width: colW, align: 'center' });
+
+    y = labelY + 22;
+    doc.moveTo(left, y).lineTo(right, y).strokeColor('#000').lineWidth(1).stroke();
+    y += 14;
+
+    doc.font('Helvetica').fontSize(8).fillColor('#222')
+        .text('* Represents laboratory screening and confirmation values', left, y, { width: contentWidth, align: 'left' });
+
     return y + 14;
 }
 
@@ -193,69 +468,26 @@ function generatePlainLabTestReportPdf(bundle) {
             const right = pageWidth - 40;
             const contentWidth = right - left;
 
-            // Header
-            doc.font('Helvetica-Bold').fontSize(20).fillColor('#1a5f9e')
-                .text(b2b?.company_name || 'METRO LAB', left, 40, { width: 260 });
-            if (b2b?.tagline) {
-                doc.font('Helvetica-Oblique').fontSize(8).fillColor('#555')
-                    .text(b2b.tagline, left, 64, { width: 260 });
-            }
+            let y = drawReportHeader(doc, bundle);
 
-            const contactX = left + 300;
-            doc.font('Helvetica').fontSize(8).fillColor('#333');
-            let cy = 42;
-            const fax = b2b?.public_fax || '';
-            const phone = b2b?.public_phone_no || '';
-            const email = b2b?.public_email || b2b?.email || '';
-            const address = b2b?.address || '';
-            if (fax) { doc.text(`FAX: ${fax}`, contactX, cy, { width: 220, align: 'right' }); cy += 11; }
-            if (phone) { doc.text(phone, contactX, cy, { width: 220, align: 'right' }); cy += 11; }
-            if (email) { doc.text(email, contactX, cy, { width: 220, align: 'right' }); cy += 11; }
-            if (address) { doc.text(address, contactX, cy, { width: 220, align: 'right' }); cy += 11; }
+            doc.moveTo(left, y).lineTo(right, y).strokeColor('#ccc').lineWidth(0.5).stroke();
+            y += 16;
 
-            let y = Math.max(90, cy + 8);
-            doc.moveTo(left, y).lineTo(right, y).strokeColor('#1a5f9e').lineWidth(1.5).stroke();
-            y += 12;
-
-            doc.font('Helvetica-Bold').fontSize(14).fillColor('#111')
-                .text(report.lab_test_name || 'Lab Test Report', left, y, { width: contentWidth, align: 'center' });
-            y += 20;
-            doc.font('Helvetica').fontSize(9).fillColor('#333')
-                .text(`Report Printed On: ${formatUsDateTime(new Date())}`, left, y, { width: contentWidth, align: 'right' });
-            y += 18;
-
-            // Meta two columns
             const mid = left + contentWidth / 2 + 10;
             let yL = y;
             let yR = y;
-            yL = drawLabelValue(doc, left, yL, 'UID:', `#${report.uid || report.id}`);
-            yL = drawLabelValue(doc, left, yL, 'Test Performed by:', report.test_performed_by || '—');
-            yL = drawLabelValue(doc, left, yL, 'Medical Officer:', b2b?.medical_officer_name || '—');
-            yL = drawLabelValue(doc, left, yL, 'CLIA No.:', b2b?.clia_number || '—');
-
-            yR = drawLabelValue(doc, mid, yR, 'Reason for Test:', report.reason_for_test || '—');
-            yR = drawLabelValue(doc, mid, yR, 'Reported Status:', report.report_status || '—');
-            yR = drawLabelValue(doc, mid, yR, 'Regulation:', report.regulation || '—');
-            yR = drawLabelValue(doc, mid, yR, 'MROCC:', b2b?.mrocc || '—');
-            y = Math.max(yL, yR) + 8;
-
-            doc.moveTo(left, y).lineTo(right, y).strokeColor('#ccc').lineWidth(0.5).stroke();
-            y += 10;
-
-            yL = y;
-            yR = y;
             yL = drawLabelValue(doc, left, yL, 'Service and Specimen Type:', report.specimen_type_name || '—', 150);
             yL = drawLabelValue(doc, left, yL, 'Received Date/Time:', formatUsDateTime(report.received_timestamp), 150);
             yR = drawLabelValue(doc, mid, yR, 'Collection Date/Time:', formatUsDateTime(report.collected_timestamp), 140);
             yR = drawLabelValue(doc, mid, yR, 'Reported Date/Time:', formatUsDateTime(report.reported_timestamp), 140);
-            y = Math.max(yL, yR) + 8;
+            y = Math.max(yL, yR) + 12;
 
             doc.moveTo(left, y).lineTo(right, y).strokeColor('#ccc').lineWidth(0.5).stroke();
-            y += 10;
+            y += 16;
 
             // Patient demographics
             doc.font('Helvetica-Bold').fontSize(10).fillColor('#1a5f9e').text('Patient/Donor', left, y);
-            y += 16;
+            y += 20;
             yL = y;
             yR = y;
             yL = drawLabelValue(doc, left, yL, 'Name:', report.patient_name || '—');
@@ -273,82 +505,11 @@ function generatePlainLabTestReportPdf(bundle) {
             yR = drawLabelValue(doc, mid, yR, 'SSN:', report.patient_ssn || '—');
             yR = drawLabelValue(doc, mid, yR, 'Age:', calcAge(report.patient_dob));
             yR = drawLabelValue(doc, mid, yR, 'Gender:', genderLabel(report.patient_gender));
-            y = Math.max(yL, yR) + 12;
+            y = Math.max(yL, yR) + 18;
 
-            // Parameters table
-            if (parameters && parameters.length > 0) {
-                doc.font('Helvetica-Bold').fontSize(10).fillColor('#1a5f9e').text('Drugs Tested', left, y);
-                y += 14;
-
-                const cols = [
-                    { key: 'label', title: 'Drug Name', w: 170 },
-                    { key: 'value', title: 'Result', w: 90 },
-                    { key: 'screen', title: 'Laboratory Screening Cutoff', w: 140 },
-                    { key: 'confirm', title: 'Laboratory Confirmation Cutoff', w: contentWidth - 170 - 90 - 140 },
-                ];
-
-                const rowH = 18;
-                // header
-                doc.rect(left, y, contentWidth, rowH).fill('#e8f1f8');
-                doc.fillColor('#111').font('Helvetica-Bold').fontSize(8);
-                let x = left + 4;
-                cols.forEach((c) => {
-                    doc.text(c.title, x, y + 5, { width: c.w - 8 });
-                    x += c.w;
-                });
-                y += rowH;
-
-                parameters.forEach((p, idx) => {
-                    if (y > doc.page.height - 120) {
-                        doc.addPage();
-                        y = 40;
-                    }
-                    if (idx % 2 === 1) {
-                        doc.rect(left, y, contentWidth, rowH).fill('#f7f9fc');
-                    }
-                    doc.fillColor('#222').font('Helvetica').fontSize(8);
-                    const vals = [
-                        p.label || '—',
-                        p.value || '—',
-                        formatCutoff(p.screening_cutoff, p.unit_text),
-                        formatCutoff(p.confirmation_cutoff, p.unit_text),
-                    ];
-                    x = left + 4;
-                    vals.forEach((v, i) => {
-                        doc.text(String(v), x, y + 5, { width: cols[i].w - 8 });
-                        x += cols[i].w;
-                    });
-                    y += rowH;
-                });
-                y += 10;
-            }
-
-            if (y > doc.page.height - 160) {
-                doc.addPage();
-                y = 40;
-            }
-
-            doc.moveTo(left, y).lineTo(right, y).strokeColor('#ccc').lineWidth(0.5).stroke();
-            y += 10;
-            doc.font('Helvetica-Bold').fontSize(10).fillColor('#1a5f9e')
-                .text('To Be Completed By Medical Review Officer', left, y);
-            y += 16;
-
-            y = drawLabelValue(doc, left, y, 'Final Result:', report.final_result || '—', 150);
-            y = drawLabelValue(doc, left, y, 'Remark:', report.test_remark || '—', 150);
-            y = drawLabelValue(doc, left, y, 'Final Result Disposition:', report.final_result_disposition || '—', 150);
-            y = drawLabelValue(doc, left, y, 'Final Remark:', report.final_remark || '—', 150);
-            y += 16;
-
-            doc.font('Helvetica').fontSize(9).fillColor('#222')
-                .text(`Medical Review Officer's Name: ${b2b?.medical_officer_name || '—'}`, left, y);
-            y += 28;
-            doc.text('Signature: ______________________________', left, y);
-            doc.text(`Date (MM/DD/YY): ${formatUsDateShort(new Date())}`, left + 280, y);
-            y += 24;
-
-            doc.font('Helvetica-Oblique').fontSize(8).fillColor('#666')
-                .text('* Represents laboratory screening and confirmation values', left, y);
+            y = drawDrugsTestedSection(doc, bundle, y);
+            y = drawMroSection(doc, bundle, y);
+            drawReportFooter(doc, bundle, y);
 
             doc.end();
         } catch (err) {

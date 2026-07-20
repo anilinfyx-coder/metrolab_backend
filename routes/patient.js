@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { pool, query, queryOne } = require('../db');
+const { pool, query, queryOne, formatDbError, isTooManyConnectionsError } = require('../db');
 const { authMiddleware } = require('../middleware/auth');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
@@ -125,8 +125,9 @@ router.get('/:id', async (req, res) => {
 
 // ── POST /api/Patient ────────────────────────────────────────
 router.post('/', async (req, res) => {
-    const client = await pool.connect();
+    let client;
     try {
+        client = await pool.connect();
         const {
             b2b_client_id, uid, name, driving_license, mobile, email, gender, dob,
             street1, street2, city, state, zipcode, driving_license_state, ssn,
@@ -183,13 +184,18 @@ router.post('/', async (req, res) => {
         await client.query('COMMIT');
         return resp(res, '200', insert.rows[0]);
     } catch (err) {
-        await client.query('ROLLBACK');
+        if (client) {
+            try { await client.query('ROLLBACK'); } catch (_) { /* no active transaction */ }
+        }
         if (err.code === '23505') {
             return resp(res, '400', 'Patient UID already exists.');
         }
+        if (isTooManyConnectionsError(err)) {
+            return resp(res, '503', formatDbError(err));
+        }
         return resp(res, '500', err.message);
     } finally {
-        client.release();
+        if (client) client.release();
     }
 });
 
