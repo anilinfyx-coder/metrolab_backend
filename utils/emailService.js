@@ -1,5 +1,10 @@
 const nodemailer = require('nodemailer');
+const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
+
+const LOGO_CID = 'metrolab-logo';
+const LOGO_PATH = path.join(__dirname, '..', 'assets', 'metrolab-logo.png');
 
 const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
@@ -11,20 +16,42 @@ const transporter = nodemailer.createTransport({
     },
 });
 
-const getEmailHeader = () => `
+const getLogoAttachment = () => {
+    if (!fs.existsSync(LOGO_PATH)) return null;
+    return {
+        filename: 'metrolab-logo.png',
+        path: LOGO_PATH,
+        cid: LOGO_CID,
+    };
+};
+
+const getEmailHeader = () => {
+    if (getLogoAttachment()) {
+        return `
     <div style="text-align: center; margin-bottom: 20px;">
-        <img src="https://www.evmerp.com/assets/logo-DA7AtwHe.png" alt="Metrolab Logo" style="max-width: 200px; height: auto;" />
+        <img src="cid:${LOGO_CID}" alt="Metrolab Logo" style="max-width: 200px; height: auto;" />
     </div>
 `;
+    }
+
+    return `
+    <div style="text-align: center; margin-bottom: 20px;">
+        <strong style="font-size: 24px; color: #0076A3;">Metrolab</strong>
+    </div>
+`;
+};
 
 const sendMail = async (to, subject, htmlContent, attachments = []) => {
     try {
+        const logoAttachment = getLogoAttachment();
+        const allAttachments = logoAttachment ? [logoAttachment, ...attachments] : attachments;
+
         const info = await transporter.sendMail({
             from: `"${process.env.SMTP_FROM_NAME || 'Metrolab'}" <${process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER}>`,
             to,
             subject,
             html: htmlContent,
-            attachments
+            attachments: allAttachments,
         });
         console.log("Message sent: %s", info.messageId);
         return true;

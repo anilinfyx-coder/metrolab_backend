@@ -1,8 +1,26 @@
 const express = require('express');
 const router = express.Router();
 const { query, queryOne } = require('../db');
+const { authMiddleware } = require('../middleware/auth');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
+
+router.use(authMiddleware);
+
+async function resolveAdminContext(userId) {
+    const admin = await queryOne(
+        `SELECT id, user_id, role_type_id
+         FROM admin_users
+         WHERE id = $1 AND deleted = false
+         LIMIT 1`,
+        [userId]
+    );
+    return {
+        b2b_client_id: admin?.user_id || null,
+        user_id: admin?.user_id || userId,
+        role_type_id: admin?.role_type_id || null,
+    };
+}
 
 // GET /api/WaitingList — all with patient info + linked tests
 router.get('/', async (req, res) => {
@@ -144,10 +162,11 @@ router.post('/', async (req, res) => {
             corporate_client_id, employee_id, lab_test_ids, user_id, role_type_id
         } = req.body;
 
+        const ctx = req.user?.id ? await resolveAdminContext(req.user.id) : null;
         let wlUid = uid;
-        let wlB2b = b2b_client_id;
-        let wlUserId = user_id;
-        let wlRoleType = role_type_id;
+        let wlB2b = b2b_client_id || ctx?.b2b_client_id || null;
+        let wlUserId = user_id || ctx?.user_id || null;
+        let wlRoleType = role_type_id || ctx?.role_type_id || null;
 
         if (patient_id) {
             const pat = await queryOne(
