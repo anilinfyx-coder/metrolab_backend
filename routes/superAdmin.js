@@ -44,7 +44,7 @@ router.get('/dashboardStats', async (req, res) => {
         const staff = await queryOne(`SELECT COUNT(*) as count FROM super_admin WHERE deleted = false`);
         const b2b = await queryOne(`SELECT COUNT(*) as count FROM b2b_clients WHERE deleted = false`);
         const corporate = await queryOne(`SELECT COUNT(*) as count FROM corporate_clients WHERE deleted = false`);
-        const labs = await queryOne(`SELECT COUNT(*) as count FROM lab_test_category WHERE deleted = false`);
+        const labs = await queryOne(`SELECT COUNT(*) as count FROM lab_tests WHERE deleted = false`);
         const patients = await queryOne(`SELECT COUNT(*) as count FROM patient WHERE deleted = false`);
         
         return resp(res, '200', {
