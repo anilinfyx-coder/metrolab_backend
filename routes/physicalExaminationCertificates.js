@@ -70,7 +70,7 @@ router.post('/', async (req, res) => {
             vision_right, vision_left, wear_glasses, eval_head, eval_nose, eval_mouth,
             eval_ears, eval_eyes, eval_lungs, eval_heart, eval_vascular, eval_abdomen,
             eval_spine, eval_skin, eval_neurologic, additional_comments, overall_condition,
-            clinician_name, date_of_examination, clinician_address
+            clinician_name, date_of_examination, clinician_address, clinician_specialty
         } = req.body;
 
         const row = await queryOne(`
@@ -79,17 +79,17 @@ router.post('/', async (req, res) => {
                 vision_right, vision_left, wear_glasses, eval_head, eval_nose, eval_mouth,
                 eval_ears, eval_eyes, eval_lungs, eval_heart, eval_vascular, eval_abdomen,
                 eval_spine, eval_skin, eval_neurologic, additional_comments, overall_condition,
-                clinician_name, date_of_examination, clinician_address
+                clinician_name, date_of_examination, clinician_address, clinician_specialty
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
-                $21, $22, $23, $24, $25, $26, $27, $28
+                $21, $22, $23, $24, $25, $26, $27, $28, $29
             ) RETURNING *
         `, [
             patient_id, age, height, weight, bp, pulse, hearing_right, hearing_left,
             vision_right, vision_left, wear_glasses || false, eval_head, eval_nose, eval_mouth,
             eval_ears, eval_eyes, eval_lungs, eval_heart, eval_vascular, eval_abdomen,
             eval_spine, eval_skin, eval_neurologic, additional_comments, overall_condition,
-            clinician_name, date_of_examination || null, clinician_address
+            clinician_name, date_of_examination || null, clinician_address, clinician_specialty || null
         ]);
 
         return resp(res, '200', row);
@@ -112,7 +112,7 @@ router.put('/:id', async (req, res) => {
             'vision_right', 'vision_left', 'wear_glasses', 'eval_head', 'eval_nose', 'eval_mouth',
             'eval_ears', 'eval_eyes', 'eval_lungs', 'eval_heart', 'eval_vascular', 'eval_abdomen',
             'eval_spine', 'eval_skin', 'eval_neurologic', 'additional_comments', 'overall_condition',
-            'clinician_name', 'date_of_examination', 'clinician_address'
+            'clinician_name', 'date_of_examination', 'clinician_address', 'clinician_specialty'
         ];
 
         for (const [key, value] of Object.entries(body)) {
@@ -148,3 +148,38 @@ router.delete('/:id', async (req, res) => {
 });
 
 module.exports = router;
+
+// POST emailPhysicalExaminationCertificate — email password-protected PDF to patient
+router.post('/emailPhysicalExaminationCertificate', async (req, res) => {
+    try {
+        const { buildPhysicalExamCertPdf } = require('../utils/physicalExamCertPdf');
+        const { sendCertificateMail } = require('../utils/emailService');
+        const { id } = req.body;
+        if (!id) return resp(res, '400', 'Certificate id is required');
+
+        const pdf = await buildPhysicalExamCertPdf(id, { encrypt: true });
+        const to = (pdf.cert.patient_email || '').trim();
+        if (!to) return resp(res, '400', 'No email address found for this patient');
+
+        if (!pdf.password) {
+            return resp(res, '400', 'Patient date of birth is required to password-protect the PDF');
+        }
+
+        const ok = await sendCertificateMail(
+            to,
+            pdf.cert.patient_name,
+            'Physical Examination Certificate',
+            pdf.buffer,
+            pdf.filename
+        );
+
+        if (!ok) {
+            return resp(res, '500', 'Failed to send email. Please check server logs.');
+        }
+
+        return resp(res, '200', 'Certificate emailed successfully');
+    } catch (err) {
+        console.error("emailPhysicalExaminationCertificate error: ", err);
+        return resp(res, '500', err.message || 'Internal Server Error');
+    }
+});

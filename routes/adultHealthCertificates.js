@@ -71,7 +71,7 @@ router.post('/', async (req, res) => {
             patient_id, free_from_disease, satisfactory_physical, tuberculin_test_type,
             tuberculin_date_planted, tuberculin_date_read, tuberculin_result,
             chest_xray_date, chest_xray_result, additional_info, clinician_name,
-            date_of_examination, clinician_address
+            date_of_examination, clinician_address, clinician_specialty
         } = req.body;
 
         const row = await queryOne(`
@@ -79,15 +79,15 @@ router.post('/', async (req, res) => {
                 patient_id, free_from_disease, satisfactory_physical, tuberculin_test_type,
                 tuberculin_date_planted, tuberculin_date_read, tuberculin_result,
                 chest_xray_date, chest_xray_result, additional_info, clinician_name,
-                date_of_examination, clinician_address
+                date_of_examination, clinician_address, clinician_specialty
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
             ) RETURNING *
         `, [
             patient_id, free_from_disease || false, satisfactory_physical || false, tuberculin_test_type,
             tuberculin_date_planted || null, tuberculin_date_read || null, tuberculin_result,
             chest_xray_date || null, chest_xray_result, additional_info, clinician_name,
-            date_of_examination || null, clinician_address
+            date_of_examination || null, clinician_address, clinician_specialty || null
         ]);
 
         return resp(res, '200', row);
@@ -109,7 +109,7 @@ router.put('/:id', async (req, res) => {
             'free_from_disease', 'satisfactory_physical', 'tuberculin_test_type',
             'tuberculin_date_planted', 'tuberculin_date_read', 'tuberculin_result',
             'chest_xray_date', 'chest_xray_result', 'additional_info', 'clinician_name',
-            'date_of_examination', 'clinician_address'
+            'date_of_examination', 'clinician_address', 'clinician_specialty'
         ];
 
         for (const [key, value] of Object.entries(body)) {
@@ -145,3 +145,38 @@ router.delete('/:id', async (req, res) => {
 });
 
 module.exports = router;
+
+// POST emailAdultHealthCertificate — email password-protected PDF to patient
+router.post('/emailAdultHealthCertificate', async (req, res) => {
+    try {
+        const { buildAdultHealthCertPdf } = require('../utils/adultHealthCertPdf');
+        const { sendCertificateMail } = require('../utils/emailService');
+        const { id } = req.body;
+        if (!id) return resp(res, '400', 'Certificate id is required');
+
+        const pdf = await buildAdultHealthCertPdf(id, { encrypt: true });
+        const to = (pdf.cert.patient_email || '').trim();
+        if (!to) return resp(res, '400', 'No email address found for this patient');
+
+        if (!pdf.password) {
+            return resp(res, '400', 'Patient date of birth is required to password-protect the PDF');
+        }
+
+        const ok = await sendCertificateMail(
+            to,
+            pdf.cert.patient_name,
+            'Adult Health Certificate',
+            pdf.buffer,
+            pdf.filename
+        );
+
+        if (!ok) {
+            return resp(res, '500', 'Failed to send email. Please check server logs.');
+        }
+
+        return resp(res, '200', 'Certificate emailed successfully');
+    } catch (err) {
+        console.error("emailAdultHealthCertificate error: ", err);
+        return resp(res, '500', err.message || 'Internal Server Error');
+    }
+});

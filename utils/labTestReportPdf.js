@@ -46,9 +46,9 @@ function calcAge(dob) {
     } else {
         const d = new Date(dob);
         if (Number.isNaN(d.getTime())) return '—';
-        y = d.getUTCFullYear();
-        m = d.getUTCMonth() + 1;
-        day = d.getUTCDate();
+        y = d.getFullYear();
+        m = d.getMonth() + 1;
+        day = d.getDate();
     }
     const now = new Date();
     let age = now.getFullYear() - y;
@@ -86,9 +86,8 @@ function buildBirthdatePassword(dob) {
     } else {
         const d = new Date(dob);
         if (Number.isNaN(d.getTime())) return null;
-        // Use UTC for DATE/TIMESTAMPTZ DOB fields to avoid local shift
-        m = d.getUTCMonth() + 1;
-        day = d.getUTCDate();
+        m = d.getMonth() + 1;
+        day = d.getDate();
     }
     if (!m || !day) return null;
     return `${pad(m)}${pad(day)}`;

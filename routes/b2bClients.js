@@ -131,7 +131,7 @@ router.post('/', uploadFields, async (req, res) => {
             primary_color_code, website, medical_officer_name, mrocc, clia_number,
             medical_officer_position, medical_officer_signature_file_name,
             is_approval, approval_note, smtp_server, smtp_port, smtp_email, smtp_password,
-            user_id, role_type_id
+            user_id, role_type_id, is_fixed_price, fixed_price_amount
         } = body;
 
         const row = await queryOne(
@@ -143,11 +143,11 @@ router.post('/', uploadFields, async (req, res) => {
                 primary_color_code, website, medical_officer_name, mrocc, clia_number,
                 medical_officer_position, medical_officer_signature_file_name,
                 is_approval, approval_note, smtp_server, smtp_port, smtp_email, smtp_password,
-                user_id, role_type_id, status, deleted
+                user_id, role_type_id, status, deleted, is_fixed_price, fixed_price_amount
             ) VALUES (
                 $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
                 $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,
-                $37,$38,true,false
+                $37,$38,true,false,$39,$40
             ) RETURNING *`,
             [role_id, company_name, contact_person_name, mobile, public_phone_no,
                 email, public_email, public_fax, address, country_id, state_id, city_id,
@@ -156,7 +156,7 @@ router.post('/', uploadFields, async (req, res) => {
                 primary_color_code, website, medical_officer_name, mrocc, clia_number,
                 medical_officer_position, medical_officer_signature_file_name,
                 is_approval, approval_note, smtp_server, smtp_port, smtp_email, smtp_password,
-                user_id, role_type_id]
+                user_id, role_type_id, is_fixed_price || false, fixed_price_amount || 0]
         );
 
         if (row && row.email) {
@@ -175,7 +175,7 @@ router.get('/:id', async (req, res) => {
                     email, public_email, public_fax, address, support_mobile, support_email,
                     support_person_name, tagline, primary_color_code, website,
                     smtp_server, smtp_port, smtp_email, smtp_password, status, deleted,
-                    wallet_balance
+                    wallet_balance, is_fixed_price, fixed_price_amount
              FROM b2b_clients WHERE id = $1 LIMIT 1`,
             [req.params.id]
         );
@@ -204,7 +204,7 @@ router.put('/:id', uploadFields, async (req, res) => {
             'medical_officer_name', 'medical_officer_position', 'mrocc', 'clia_number',
             'logo_file', 'report_header_file', 'report_footer_file', 'medical_officer_signature_file_name',
             'smtp_server', 'smtp_port', 'smtp_email', 'smtp_password',
-            'is_approval', 'approval_note', 'status',
+            'is_approval', 'approval_note', 'status', 'is_fixed_price', 'fixed_price_amount'
         ];
 
         const updates = [];
@@ -235,7 +235,8 @@ router.put('/:id', uploadFields, async (req, res) => {
              RETURNING id, role_id, company_name, contact_person_name, mobile, public_phone_no,
                        email, public_email, public_fax, address, support_mobile, support_email,
                        support_person_name, tagline, primary_color_code, website,
-                       smtp_server, smtp_port, smtp_email, smtp_password, status, deleted`,
+                       smtp_server, smtp_port, smtp_email, smtp_password, status, deleted,
+                       is_fixed_price, fixed_price_amount`,
             values
         );
         if (!row) return resp(res, '404', 'B2B Client not found');
