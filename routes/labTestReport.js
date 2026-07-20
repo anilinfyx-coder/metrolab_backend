@@ -29,12 +29,17 @@ router.post('/', async (req, res) => {
         let b2bClient = null;
         let newBalance = 0;
         if (b2b_client_id) {
-            const priceKey = `lab_test_${lab_test_id}_price`;
-            const priceRow = await queryOne('SELECT setting_value FROM global_settings WHERE setting_key = $1', [priceKey]);
-            testPrice = parseFloat(priceRow?.setting_value || 0);
+            b2bClient = await queryOne('SELECT wallet_balance, is_fixed_price, fixed_price_amount FROM b2b_clients WHERE id = $1', [b2b_client_id]);
+            
+            if (b2bClient && b2bClient.is_fixed_price) {
+                testPrice = parseFloat(b2bClient.fixed_price_amount || 0);
+            } else {
+                const priceKey = `lab_test_${lab_test_id}_price`;
+                const priceRow = await queryOne('SELECT setting_value FROM global_settings WHERE setting_key = $1', [priceKey]);
+                testPrice = parseFloat(priceRow?.setting_value || 0);
+            }
 
             if (testPrice > 0) {
-                b2bClient = await queryOne('SELECT wallet_balance FROM b2b_clients WHERE id = $1', [b2b_client_id]);
                 const currentBalance = parseFloat(b2bClient?.wallet_balance || 0);
 
                 if (currentBalance < testPrice) {
