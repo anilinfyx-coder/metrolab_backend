@@ -10,14 +10,25 @@ router.use(authMiddleware);
 
 router.get('/', async (req, res) => {
     try {
+        let whereClause = "t.deleted = false";
+        const values = [];
+        if (req.query.corporate_client_id) {
+            values.push(req.query.corporate_client_id);
+            whereClause += ` AND t.corporate_client_id = $${values.length}`;
+        }
+        if (req.query.b2b_client_id) {
+            values.push(req.query.b2b_client_id);
+            whereClause += ` AND t.b2b_client_id = $${values.length}`;
+        }
+
         const { rows } = await query(`
             SELECT t.*, c.company_name as "corporateClientCompany", b.company_name as "b2bClientCompany"
             FROM test_request t
             LEFT JOIN corporate_clients c ON t.corporate_client_id = c.id
             LEFT JOIN b2b_clients b ON t.b2b_client_id = b.id
-            WHERE t.deleted = false 
+            WHERE ${whereClause}
             ORDER BY t.id DESC
-        `);
+        `, values);
         
         // Format for listing UI: DD-MM-YYYY HH:MM:SS
         const formatted = rows.map(r => {
