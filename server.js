@@ -34,6 +34,8 @@ app.use('/api/B2bClientDocument', require('./routes/b2bClientDocument'));
 app.use('/api/B2bClientSubscription', b2bClientSubscriptionRouter);
 app.use('/api/B2bClientLabTestAccess', b2bClientLabTestAccessRouter);
 app.use('/api/LabTestReport', labTestReportRoutes);
+app.use('/api/AdultHealthCertificates', require('./routes/adultHealthCertificates'));
+app.use('/api/PhysicalExaminationCertificates', require('./routes/physicalExaminationCertificates'));
 
 // ── Generic CRUD Routes (table name mapped) ──────────────────
 app.use('/api/Employees', crudRoutes('employees'));
