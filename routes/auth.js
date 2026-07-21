@@ -21,13 +21,16 @@ router.post('/login', async (req, res) => {
             'corporate_clients',
         ];
 
+        let lastError = null;
+
         for (const table of tables) {
             const attempt = await authenticateByEmail(queryOne, table, username, password);
             if (!attempt.found) continue;
 
             const { result } = attempt;
             if (!result.ok) {
-                return resp(res, result.code, result.message);
+                lastError = { code: result.code, message: result.message };
+                continue;
             }
 
             const user = result.user;
@@ -99,6 +102,10 @@ router.post('/login', async (req, res) => {
             );
             res.setHeader('token', token);
             return resp(res, '200', { ...payload, token });
+        }
+
+        if (lastError) {
+            return resp(res, lastError.code, lastError.message);
         }
 
         return resp(res, '401', 'Invalid credentials');

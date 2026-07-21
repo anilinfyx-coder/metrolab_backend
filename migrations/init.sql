@@ -516,6 +516,7 @@ CREATE TABLE IF NOT EXISTS report_questions (
     creation_timestamp    TIMESTAMPTZ DEFAULT NOW(),
     created_by_id         INT,
     lab_test_id           INT REFERENCES lab_tests(id),
+    b2b_client_id         INT,
     question_text         TEXT,
     description           TEXT,
     answer_type           INT,
