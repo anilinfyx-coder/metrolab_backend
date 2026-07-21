@@ -183,7 +183,8 @@ router.post('/emailAdultHealthCertificate', async (req, res) => {
             pdf.cert.patient_name,
             'Adult Health Certificate',
             pdf.buffer,
-            pdf.filename
+            pdf.filename,
+            pdf.lab
         );
 
         if (!ok) {

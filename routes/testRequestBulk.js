@@ -135,12 +135,23 @@ router.post('/saveTestRequestInBulk', async (req, res) => {
         }
 
         if (b2bClientId) {
-            const b2bClient = await queryOne('SELECT email, company_name FROM b2b_clients WHERE id = $1', [b2bClientId]);
+            const b2bClient = await queryOne(
+                `SELECT email, company_name, tagline, logo_file, report_header_file
+                 FROM b2b_clients WHERE id = $1`,
+                [b2bClientId]
+            );
             const corpClient = corpClientId ? await queryOne('SELECT company_name FROM corporate_clients WHERE id = $1', [corpClientId]) : null;
             
             if (b2bClient && b2bClient.email) {
                 const corpName = corpClient ? corpClient.company_name : 'N/A';
-                sendLabNotificationMail(b2bClient.email, b2bClient.company_name, corpName, payload.title, payload.totalCount).catch(err => console.error('Lab Notification Email error:', err));
+                sendLabNotificationMail(
+                    b2bClient.email,
+                    b2bClient.company_name,
+                    corpName,
+                    payload.title,
+                    payload.totalCount,
+                    b2bClient
+                ).catch(err => console.error('Lab Notification Email error:', err));
             }
         }
 
@@ -925,7 +936,8 @@ router.post('/emailTestRequestReport', async (req, res) => {
         const { test_request_id, employee_id } = req.body;
         
         const trQuery = `
-            SELECT t.*, c.company_name as "corporateClientCompany", b.company_name as "b2bClientCompany"
+            SELECT t.*, c.company_name as "corporateClientCompany", b.company_name as "b2bClientCompany",
+                   b.tagline as "b2bTagline", b.logo_file as "b2bLogoFile", b.report_header_file as "b2bReportHeaderFile"
             FROM test_request t
             LEFT JOIN corporate_clients c ON t.corporate_client_id = c.id
             LEFT JOIN b2b_clients b ON t.b2b_client_id = b.id
@@ -951,12 +963,19 @@ router.post('/emailTestRequestReport', async (req, res) => {
         doc.on('data', buffers.push.bind(buffers));
         doc.on('end', async () => {
             const pdfData = Buffer.concat(buffers);
+            const labBranding = {
+                company_name: tr.b2bClientCompany,
+                tagline: tr.b2bTagline,
+                logo_file: tr.b2bLogoFile,
+                report_header_file: tr.b2bReportHeaderFile,
+            };
             const success = await sendTestRequestEmployeeReportMail(
                 emp.email,
                 `${emp.first_name} ${emp.last_name}`,
                 tr.title,
                 pdfData,
-                `TR-${tr.id}-${emp.first_name}-Report.pdf`
+                `TR-${tr.id}-${emp.first_name}-Report.pdf`,
+                labBranding
             );
             if (success) {
                 return resp(res, '200', 'Email sent successfully');

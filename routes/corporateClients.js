@@ -62,7 +62,13 @@ router.post('/', async (req, res) => {
         );
 
         if (row && row.email) {
-            sendWelcomeCorporateMail(row.email, row.company_name, password).catch(err => console.error('Corporate Email error:', err));
+            const lab = row.b2b_client_id
+                ? await queryOne(
+                    'SELECT company_name, tagline, logo_file, report_header_file FROM b2b_clients WHERE id = $1 LIMIT 1',
+                    [row.b2b_client_id]
+                )
+                : null;
+            sendWelcomeCorporateMail(row.email, row.company_name, password, lab).catch(err => console.error('Corporate Email error:', err));
         }
 
         return resp(res, '200', row);

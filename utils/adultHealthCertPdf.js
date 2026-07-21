@@ -143,7 +143,7 @@ async function resolveLoggedInLab(authUser) {
     if (!b2bId) return null;
 
     return queryOne(
-        `SELECT company_name, logo_file, address, public_phone_no, public_fax,
+        `SELECT company_name, logo_file, report_header_file, address, public_phone_no, public_fax,
                 public_email, website, medical_officer_signature_file_name, tagline
          FROM b2b_clients
          WHERE id = $1 AND deleted = false
@@ -218,9 +218,10 @@ async function buildAdultHealthCertPdf(id, options = {}) {
                         cert,
                         filename: `Adult_Health_Certificate_${cert.id}.pdf`,
                         password,
+                        lab,
                     });
                 } else {
-                    resolve({ buffer: pdfBuffer, cert, filename: `Adult_Health_Certificate_${cert.id}.pdf` });
+                    resolve({ buffer: pdfBuffer, cert, filename: `Adult_Health_Certificate_${cert.id}.pdf`, lab });
                 }
             });
 

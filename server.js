@@ -3,6 +3,7 @@ const express = require('express');
 const cors = require('cors');
 const { pool } = require('./db');
 const { getDatabaseLabel, isManagedDatabase } = require('./dbConfig');
+const { runStartupMigrations } = require('./utils/runMigrations');
 
 const labTestReportRoutes = require('./routes/labTestReport');
 
@@ -52,7 +53,7 @@ app.use('/api/TbTest', crudRoutes('tb_test'));
 app.use('/api/WaitingList', waitingListRouter);
 app.use('/api/WaitingTestLabTest', crudRoutes('waiting_test_lab_test'));
 app.use('/api/SpecimenType', crudRoutes('specimen_type'));
-app.use('/api/SpecimenTypeDrugLinking', specimenTypeDrugLinkingRouter);  // Custom route: handles lab_test_id + JOINs
+app.use('/api/SpecimenTypeDrugLinking', specimenTypeDrugLinkingRouter);
 app.use('/api/LabTestCategoryReport', require('./routes/labTestCategoryReport'));
 app.use('/api/ReportQuestions', crudRoutes('report_questions'));
 app.use('/api/TestRequest', require('./routes/testRequestBulk'));
@@ -80,12 +81,24 @@ app.get('/health', async (req, res) => {
     }
 });
 
-// ── Start Server ─────────────────────────────────────────────
+// ── Start Server (migrations first) ──────────────────────────
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-    console.log(`✅ Metrolab Node.js API running on http://localhost:${PORT}`);
-    console.log(`🔗 Database: ${getDatabaseLabel()}`);
-    if (!isManagedDatabase()) {
-        console.log(`📋 Run "npm run migrate" first to create database tables`);
+
+async function start() {
+    try {
+        await runStartupMigrations();
+    } catch (err) {
+        console.error('❌ Startup migration failed:', err.message);
+        process.exit(1);
     }
-});
+
+    app.listen(PORT, () => {
+        console.log(`✅ Metrolab Node.js API running on http://localhost:${PORT}`);
+        console.log(`🔗 Database: ${getDatabaseLabel()}`);
+        if (!isManagedDatabase()) {
+            console.log(`📋 Fresh DB setup: npm run migrate`);
+        }
+    });
+}
+
+start();

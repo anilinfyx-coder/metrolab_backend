@@ -38,10 +38,17 @@ async function createDatabase() {
 async function runMigration() {
     const pool = new Pool(getPoolConfig());
 
-    const sql = fs.readFileSync(path.join(__dirname, 'migrations', 'init.sql'), 'utf8');
     try {
-        await pool.query(sql);
+        const initSql = fs.readFileSync(path.join(__dirname, 'migrations', 'init.sql'), 'utf8');
+        await pool.query(initSql);
         console.log('✅ All tables created successfully!');
+
+        const migrateSqlPath = path.join(__dirname, 'migrations', 'migrate.sql');
+        if (fs.existsSync(migrateSqlPath)) {
+            const migrateSql = fs.readFileSync(migrateSqlPath, 'utf8');
+            await pool.query(migrateSql);
+            console.log('✅ Incremental migrations applied (migrate.sql)!');
+        }
     } finally {
         await pool.end();
     }
