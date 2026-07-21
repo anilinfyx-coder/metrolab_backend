@@ -3,13 +3,13 @@ const router = express.Router();
 const multer = require('multer');
 const { query, queryOne } = require('../db');
 const { authMiddleware } = require('../middleware/auth');
-const { uploadBuffer, deleteObject, getSignedUrl, generateFileName } = require('../utils/gcs');
+const { uploadBuffer, deleteObject, getSignedUrl, generateFileName, PREFIX } = require('../utils/gcs');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
 // Files are stored in GCS under this prefix. `file_name` in the DB stays a
 // flat name (as before); the prefix is only ever applied server-side.
-const GCS_PREFIX = 'b2b-client-documents/';
+const GCS_PREFIX = PREFIX.b2bDocuments;
 
 // Uploads are buffered in memory, then pushed to GCS (Cloud Run's container
 // filesystem is ephemeral and not shared across instances).
@@ -17,9 +17,13 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 // GET file helper (public - no auth required so browser can open files directly).
 // Redirects to a short-lived pre-signed GCS URL rather than serving the file itself.
+// ?json=1 returns { url } instead of redirect.
 router.get('/file/:filename', async (req, res) => {
     try {
         const url = await getSignedUrl(GCS_PREFIX + req.params.filename);
+        if (String(req.query.json || '') === '1') {
+            return resp(res, '200', { url, filename: req.params.filename });
+        }
         return res.redirect(url);
     } catch (err) {
         console.error(err);

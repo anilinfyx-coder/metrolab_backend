@@ -4,8 +4,12 @@ const path = require('path');
 const PDFDocument = require('pdfkit');
 const muhammara = require('muhammara');
 const { queryOne } = require('../db');
+const {
+    resolveUploadedFilePath,
+    resolveLabLogoPath,
+} = require('./uploadedFiles');
+const { PREFIX } = require('./gcs');
 
-const DEFAULT_LOGO_PATH = path.join(__dirname, '..', 'assets', 'metrolab-logo.png');
 const FALLBACK = {
     company: 'Metro Lab & Clinic LLC',
     addressLine: '3422 Georgia Avenue NW • Washington, D.C. 20010',
@@ -67,36 +71,6 @@ function encryptPdfBuffer(plainBuffer, userPassword) {
     }
 }
 
-function resolveUploadedImagePath(filename) {
-    if (!filename) return null;
-    const clean = String(filename).trim();
-    const normalized = clean.replace(/\\/g, '/');
-    const baseName = path.basename(normalized);
-    const bases = [
-        path.join(__dirname, '..'),
-        path.join(__dirname, '..', 'uploads'),
-        path.join(__dirname, '..', 'uploads', 'b2bClients'),
-        path.join(__dirname, '..', 'Uploads', 'b2bClients'),
-    ];
-    const candidates = [
-        clean,
-        normalized,
-        baseName,
-        path.join('uploads', baseName),
-        path.join('uploads', 'b2bClients', baseName),
-        path.join('Uploads', 'b2bClients', baseName),
-    ];
-    for (const candidate of candidates) {
-        if (!candidate) continue;
-        if (path.isAbsolute(candidate) && fs.existsSync(candidate)) return candidate;
-        for (const base of bases) {
-            const full = path.join(base, candidate);
-            if (fs.existsSync(full)) return full;
-        }
-    }
-    return null;
-}
-
 function textOrNull(value) {
     if (value == null) return null;
     const text = String(value).trim();
@@ -152,11 +126,10 @@ async function resolveLoggedInLab(authUser) {
     );
 }
 
-function resolveCertLogoPath(lab) {
-    const labLogo = resolveUploadedImagePath(lab?.logo_file);
+async function resolveCertLogoPath(lab) {
+    const labLogo = await resolveUploadedFilePath(lab?.logo_file, { prefix: PREFIX.b2bClients });
     if (labLogo) return labLogo;
-    if (fs.existsSync(DEFAULT_LOGO_PATH)) return DEFAULT_LOGO_PATH;
-    return resolveUploadedImagePath('metrolablogo.png');
+    return resolveLabLogoPath(lab);
 }
 
 function isMale(sex) {
@@ -199,6 +172,14 @@ async function buildAdultHealthCertPdf(id, options = {}) {
 
     // Logged-in lab branding (admin staff → b2b via user_id, or b2b portal). Metro Lab only if missing.
     const lab = await resolveLoggedInLab(options.authUser);
+    const logoPath = await resolveCertLogoPath(lab);
+    const hasLabLogo = Boolean(
+        await resolveUploadedFilePath(lab?.logo_file, { prefix: PREFIX.b2bClients })
+    );
+    const sigPath = await resolveUploadedFilePath(
+        lab?.medical_officer_signature_file_name,
+        { prefix: PREFIX.b2bClients }
+    );
 
     return new Promise((resolve, reject) => {
         try {
@@ -238,8 +219,6 @@ async function buildAdultHealthCertPdf(id, options = {}) {
             const email = labOrFallback(lab?.public_email, FALLBACK.email);
             const website = String(labOrFallback(lab?.website, FALLBACK.website)).replace(/^https?:\/\//i, '');
             const bannerAddress = labOrFallback(lab?.address, FALLBACK.addressLine);
-            const hasLabLogo = Boolean(resolveUploadedImagePath(lab?.logo_file));
-            const logoPath = resolveCertLogoPath(lab);
 
             // Watermark
             doc.save();
@@ -405,7 +384,6 @@ async function buildAdultHealthCertPdf(id, options = {}) {
             doc.font('Times-Roman').fontSize(11).text('Name/ Signature of examining Clinician:', left, y + 1);
             const sigX = left + 220;
             const sigW = 200;
-            const sigPath = resolveUploadedImagePath(lab?.medical_officer_signature_file_name);
             if (sigPath) {
                 try {
                     doc.image(sigPath, sigX + 36, y - 16, { fit: [120, 32] });

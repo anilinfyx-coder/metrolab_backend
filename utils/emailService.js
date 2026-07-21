@@ -1,15 +1,7 @@
 const nodemailer = require('nodemailer');
 require('dotenv').config();
 const { buildEmailBranding } = require('./emailBranding');
-
-function getFrontendBaseUrl() {
-    const raw = process.env.FRONTEND_URL || process.env.APP_URL || process.env.CLIENT_URL || 'http://localhost:3000';
-    return String(raw).trim().replace(/\/+$/, '');
-}
-
-function getLoginUrl() {
-    return `${getFrontendBaseUrl()}/`;
-}
+const { getLoginUrl } = require('./frontendUrl');
 
 function buildLoginLinkBlock(portalLabel = 'Portal') {
     const loginUrl = getLoginUrl();
@@ -33,7 +25,7 @@ const transporter = nodemailer.createTransport({
 
 const sendMail = async (to, subject, htmlContent, attachments = [], lab = null) => {
     try {
-        const branding = buildEmailBranding(lab);
+        const branding = await buildEmailBranding(lab);
         const allAttachments = branding.logoAttachment
             ? [branding.logoAttachment, ...attachments]
             : attachments;
@@ -54,7 +46,7 @@ const sendMail = async (to, subject, htmlContent, attachments = [], lab = null) 
 };
 
 const sendWelcomeB2BMail = async (to, companyName, password, lab = null) => {
-    const branding = buildEmailBranding(lab);
+    const branding = await buildEmailBranding(lab);
     const subject = `Welcome to ${branding.companyName} - Your Portal Credentials`;
     const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
@@ -77,7 +69,7 @@ const sendWelcomeB2BMail = async (to, companyName, password, lab = null) => {
 };
 
 const sendWelcomeCorporateMail = async (to, companyName, password, lab = null) => {
-    const branding = buildEmailBranding(lab);
+    const branding = await buildEmailBranding(lab);
     const subject = `Welcome to ${branding.companyName} - Your Corporate Portal Credentials`;
     const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
@@ -100,7 +92,7 @@ const sendWelcomeCorporateMail = async (to, companyName, password, lab = null) =
 };
 
 const sendSubscriptionPurchaseMail = async (to, companyName, amount, startDate, endDate, lab = null) => {
-    const branding = buildEmailBranding(lab);
+    const branding = await buildEmailBranding(lab);
     const subject = `Subscription Confirmation - ${branding.companyName}`;
     const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
@@ -123,7 +115,7 @@ const sendSubscriptionPurchaseMail = async (to, companyName, amount, startDate, 
 };
 
 const sendWalletRechargeMail = async (to, companyName, amount, newBalance, description, lab = null) => {
-    const branding = buildEmailBranding(lab);
+    const branding = await buildEmailBranding(lab);
     const subject = `Wallet Funds Added - ${branding.companyName}`;
     const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
@@ -146,7 +138,7 @@ const sendWalletRechargeMail = async (to, companyName, amount, newBalance, descr
 };
 
 const sendLabNotificationMail = async (to, labName, corporateName, title, count, lab = null) => {
-    const branding = buildEmailBranding(lab);
+    const branding = await buildEmailBranding(lab);
     const subject = `New Test Request Received - ${branding.companyName}`;
     const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
@@ -169,7 +161,7 @@ const sendLabNotificationMail = async (to, labName, corporateName, title, count,
 };
 
 const sendTestRequestEmployeeReportMail = async (to, employeeName, testTitle, pdfBuffer, pdfFilename, lab = null) => {
-    const branding = buildEmailBranding(lab);
+    const branding = await buildEmailBranding(lab);
     const subject = `Test Report: ${testTitle} - ${employeeName}`;
     const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
@@ -187,7 +179,7 @@ const sendTestRequestEmployeeReportMail = async (to, employeeName, testTitle, pd
 };
 
 const sendLabTestCategoryReportMail = async (to, patientName, testName, reportUid, pdfBuffer, pdfFilename, lab = null) => {
-    const branding = buildEmailBranding(lab);
+    const branding = await buildEmailBranding(lab);
     const subject = `Lab Test Report: ${testName || 'Report'} (${reportUid || ''})`;
     const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
@@ -211,7 +203,7 @@ const sendLabTestCategoryReportMail = async (to, patientName, testName, reportUi
 };
 
 const sendCertificateMail = async (to, patientName, certType, pdfBuffer, pdfFilename, lab = null) => {
-    const branding = buildEmailBranding(lab);
+    const branding = await buildEmailBranding(lab);
     const subject = `Your ${certType}`;
     const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
@@ -231,7 +223,7 @@ const sendCertificateMail = async (to, patientName, certType, pdfBuffer, pdfFile
 };
 
 const sendPasswordResetMail = async (to, displayName, resetUrl, lab = null) => {
-    const branding = buildEmailBranding(lab);
+    const branding = await buildEmailBranding(lab);
     const subject = `Reset Your Password - ${branding.companyName}`;
     const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">

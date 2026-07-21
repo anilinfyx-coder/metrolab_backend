@@ -7,6 +7,7 @@ const { query, queryOne } = require('../db');
 const { JWT_SECRET } = require('../middleware/auth');
 const { authenticateByEmail } = require('../utils/loginAuth');
 const { sendPasswordResetMail } = require('../utils/emailService');
+const { getFrontendBaseUrl } = require('../utils/frontendUrl');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
@@ -19,11 +20,6 @@ const ACCOUNT_TABLES = [
 
 const GENERIC_FORGOT_MESSAGE =
     'If an account exists for that email, a password reset link has been sent.';
-
-function getFrontendBaseUrl() {
-    const raw = process.env.FRONTEND_URL || process.env.APP_URL || process.env.CLIENT_URL || 'http://localhost:3000';
-    return String(raw).trim().replace(/\/+$/, '');
-}
 
 function pickDisplayName(user, nameFields) {
     for (const field of nameFields) {

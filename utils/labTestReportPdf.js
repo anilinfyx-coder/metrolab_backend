@@ -8,6 +8,11 @@ const {
     resolveOwnerB2bClientId,
     resolveLabTestWithDisplayOptions,
 } = require('./labTestDisplayOptions');
+const {
+    resolveUploadedFilePath,
+    resolveLabLogoPath,
+} = require('./uploadedFiles');
+const { PREFIX } = require('./gcs');
 
 function showFlag(labTest, flag) {
     return !!(labTest && labTest[flag]);
@@ -209,47 +214,8 @@ async function loadLabTestReportBundle(reportId) {
     return { report, b2b, parameters, labTest, b2bClientId };
 }
 
-const DEFAULT_LOGO_PATH = path.join(__dirname, '..', 'assets', 'metrolab-logo.png');
-
-function resolveUploadedImagePath(filename) {
-    if (!filename) return null;
-    const clean = String(filename).trim();
-    const normalized = clean.replace(/\\/g, '/');
-    const baseName = path.basename(normalized);
-    const bases = [
-        path.join(__dirname, '..'),
-        path.join(__dirname, '..', 'uploads', 'b2bClients'),
-        path.join(__dirname, '..', 'Uploads', 'b2bClients'),
-    ];
-
-    const candidates = [
-        clean,
-        normalized,
-        baseName,
-        path.join('uploads', 'b2bClients', baseName),
-        path.join('Uploads', 'b2bClients', baseName),
-    ];
-
-    for (const candidate of candidates) {
-        if (!candidate) continue;
-        if (path.isAbsolute(candidate) && fs.existsSync(candidate)) return candidate;
-        for (const base of bases) {
-            const full = path.join(base, candidate);
-            if (fs.existsSync(full)) return full;
-        }
-    }
-    return null;
-}
-
-function resolveReportLogoPath(b2b) {
-    const uploadedLogo =
-        resolveUploadedImagePath(b2b?.logo_file) ||
-        resolveUploadedImagePath(b2b?.report_header_file);
-    if (uploadedLogo && !uploadedLogo.toLowerCase().endsWith('.webp')) {
-        return uploadedLogo;
-    }
-    if (fs.existsSync(DEFAULT_LOGO_PATH)) return DEFAULT_LOGO_PATH;
-    return null;
+async function resolveReportLogoPath(b2b) {
+    return resolveLabLogoPath(b2b);
 }
 
 function drawContactLine(doc, x, y, width, text) {
@@ -264,7 +230,7 @@ function drawLabelValue(doc, x, y, label, value, labelWidth = 130) {
 }
 
 function drawReportHeader(doc, bundle) {
-    const { report, b2b, labTest } = bundle;
+    const { report, b2b, labTest, logoPath } = bundle;
     const left = 40;
     const right = doc.page.width - 40;
     const contentWidth = right - left;
@@ -272,7 +238,6 @@ function drawReportHeader(doc, bundle) {
     const contactWidth = contentWidth - 270;
 
     let headerBottom = 40;
-    const logoPath = resolveReportLogoPath(b2b);
 
     if (logoPath) {
         try {
@@ -516,7 +481,7 @@ function drawReportFooter(doc, bundle, startY) {
     const reportDate = (showFlag(labTest, 'show_reported_date') || showFlag(labTest, 'show_reported_time'))
         ? formatUsDateShort(report.reported_timestamp || new Date())
         : formatUsDateShort(new Date());
-    const sigPath = resolveUploadedImagePath(b2b?.medical_officer_signature_file_name);
+    const sigPath = bundle.sigPath;
 
     const valueY = y;
     const labelY = y + 34;
@@ -550,10 +515,17 @@ function drawReportFooter(doc, bundle, startY) {
     return y + 14;
 }
 
-function generatePlainLabTestReportPdf(bundle) {
+async function generatePlainLabTestReportPdf(bundle) {
+    const logoPath = await resolveReportLogoPath(bundle.b2b);
+    const sigPath = await resolveUploadedFilePath(
+        bundle.b2b?.medical_officer_signature_file_name,
+        { prefix: PREFIX.b2bClients }
+    );
+    const assets = { ...bundle, logoPath, sigPath };
+
     return new Promise((resolve, reject) => {
         try {
-            const { report, labTest } = bundle;
+            const { report, labTest } = assets;
             const doc = new PDFDocument({ margin: 40, size: 'LETTER' });
             const chunks = [];
             doc.on('data', (c) => chunks.push(c));
@@ -566,7 +538,7 @@ function generatePlainLabTestReportPdf(bundle) {
             const contentWidth = right - left;
             const mid = left + contentWidth / 2 + 10;
 
-            let y = drawReportHeader(doc, bundle);
+            let y = drawReportHeader(doc, assets);
 
             const showSpecimen = showFlag(labTest, 'show_specimen');
             const showCollected = showFlag(labTest, 'show_collected_date') || showFlag(labTest, 'show_collected_time');
@@ -623,10 +595,10 @@ function generatePlainLabTestReportPdf(bundle) {
             yR = drawLabelValue(doc, mid, yR, 'Gender:', genderLabel(report.patient_gender));
             y = Math.max(yL, yR) + 18;
 
-            y = drawAdditionalDetailsSection(doc, bundle, y);
-            y = drawDrugsTestedSection(doc, bundle, y);
-            y = drawMroSection(doc, bundle, y);
-            drawReportFooter(doc, bundle, y);
+            y = drawAdditionalDetailsSection(doc, assets, y);
+            y = drawDrugsTestedSection(doc, assets, y);
+            y = drawMroSection(doc, assets, y);
+            drawReportFooter(doc, assets, y);
 
             doc.end();
         } catch (err) {
