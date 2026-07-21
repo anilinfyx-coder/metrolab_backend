@@ -17,6 +17,24 @@ router.get('/', async (req, res) => {
             whereClause += ` AND pec.patient_id = $${values.length}`;
         }
 
+        const { resolveAdminContext } = require('../utils/adminContext');
+        if (req.user && req.user.portal === 'b2b') {
+            values.push(req.user.id);
+            whereClause += ` AND p.b2b_client_id = $${values.length}`;
+        } else if (req.user && req.user.portal === 'corporate') {
+            values.push(req.user.id);
+            whereClause += ` AND p.corporate_client_id = $${values.length}`;
+        } else if (req.user && req.user.portal === 'admin') {
+            const ctx = await resolveAdminContext(req.user.id);
+            if (ctx.b2b_client_id) {
+                values.push(ctx.b2b_client_id);
+                whereClause += ` AND p.b2b_client_id = $${values.length}`;
+            } else if (ctx.corporate_client_id) {
+                values.push(ctx.corporate_client_id);
+                whereClause += ` AND p.corporate_client_id = $${values.length}`;
+            }
+        }
+
         const { rows } = await query(`
             SELECT 
                 pec.*,

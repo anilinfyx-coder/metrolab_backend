@@ -38,24 +38,43 @@ router.post('/login', async (req, res) => {
 // ── Dashboard & Profile Routes (Protected) ───────────────────
 router.use(authMiddleware);
 
+// Simple in-memory cache for dashboard stats
+let dashboardCache = {
+    data: null,
+    lastFetch: 0
+};
+const CACHE_TTL = 2 * 60 * 1000; // 2 minutes
+
 router.get('/dashboardStats', async (req, res) => {
     try {
-        const stats = await queryOne(`
-            SELECT 
-                (SELECT COUNT(*) FROM super_admin WHERE deleted = false) as staff,
-                (SELECT COUNT(*) FROM b2b_clients WHERE deleted = false) as b2b,
-                (SELECT COUNT(*) FROM corporate_clients WHERE deleted = false) as corporate,
-                (SELECT COUNT(*) FROM lab_tests WHERE deleted = false) as labs,
-                (SELECT COUNT(*) FROM patient WHERE deleted = false) as patients
-        `);
+        const now = Date.now();
+        // Return cached data if valid
+        if (dashboardCache.data && (now - dashboardCache.lastFetch < CACHE_TTL)) {
+            return resp(res, '200', dashboardCache.data);
+        }
+
+        // Run counting queries in parallel for faster execution
+        const [staff, b2b, corporate, labs, patients] = await Promise.all([
+            queryOne('SELECT COUNT(*) as count FROM super_admin WHERE deleted = false'),
+            queryOne('SELECT COUNT(*) as count FROM b2b_clients WHERE deleted = false'),
+            queryOne('SELECT COUNT(*) as count FROM corporate_clients WHERE deleted = false'),
+            queryOne('SELECT COUNT(*) as count FROM lab_tests WHERE deleted = false'),
+            queryOne('SELECT COUNT(*) as count FROM patient WHERE deleted = false')
+        ]);
         
-        return resp(res, '200', {
-            total_staff: parseInt(stats.staff, 10),
-            total_b2b_clients: parseInt(stats.b2b, 10),
-            total_corporate_clients: parseInt(stats.corporate, 10),
-            total_lab_tests: parseInt(stats.labs, 10),
-            total_patients: parseInt(stats.patients, 10)
-        });
+        const data = {
+            total_staff: parseInt(staff.count, 10),
+            total_b2b_clients: parseInt(b2b.count, 10),
+            total_corporate_clients: parseInt(corporate.count, 10),
+            total_lab_tests: parseInt(labs.count, 10),
+            total_patients: parseInt(patients.count, 10)
+        };
+
+        // Update cache
+        dashboardCache.data = data;
+        dashboardCache.lastFetch = now;
+
+        return resp(res, '200', data);
     } catch (err) {
         console.error(err);
         return resp(res, '500', err.message);

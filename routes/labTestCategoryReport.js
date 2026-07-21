@@ -27,6 +27,24 @@ router.get('/', async (req, res) => {
             }
         }
 
+        const { resolveAdminContext } = require('../utils/adminContext');
+        if (req.user && req.user.portal === 'b2b') {
+            whereClause += ` AND r.b2b_client_id = $${index++}`;
+            values.push(req.user.id);
+        } else if (req.user && req.user.portal === 'corporate') {
+            whereClause += ` AND r.corporate_client_id = $${index++}`;
+            values.push(req.user.id);
+        } else if (req.user && req.user.portal === 'admin') {
+            const ctx = await resolveAdminContext(req.user.id);
+            if (ctx.b2b_client_id) {
+                whereClause += ` AND r.b2b_client_id = $${index++}`;
+                values.push(ctx.b2b_client_id);
+            } else if (ctx.corporate_client_id) {
+                whereClause += ` AND r.corporate_client_id = $${index++}`;
+                values.push(ctx.corporate_client_id);
+            }
+        }
+
         const { rows } = await query(
             `SELECT r.*,
                     p.name as patient_name,
