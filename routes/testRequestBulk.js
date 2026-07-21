@@ -5,6 +5,7 @@ const { pool, query, queryOne } = require('../db');
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 const { authMiddleware } = require('../middleware/auth');
 const { resolveAdminContext } = require('../utils/adminContext');
+const { encryptPII } = require('../utils/cryptoUtils');
 const { sendLabNotificationMail, sendTestRequestEmployeeReportMail } = require('../utils/emailService');
 
 router.use(authMiddleware);
@@ -779,18 +780,18 @@ router.post('/transferEmployeeToWaitingList', async (req, res) => {
                     b2bClientId,
                     patientUid,
                     patientName,
-                    row.driving_license,
+                    encryptPII(row.driving_license),
                     row.mobile,
                     row.email,
                     row.gender,
-                    row.dob,
+                    encryptPII(row.dob),
                     row.street1,
                     row.street2,
                     row.city,
                     row.state,
                     row.zipcode,
                     row.driving_license_state,
-                    row.ssn,
+                    encryptPII(row.ssn),
                     ctx.created_by_id,
                     ctx.user_id,
                     ctx.role_type_id,
