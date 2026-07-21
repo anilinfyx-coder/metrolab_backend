@@ -21,6 +21,22 @@ router.get('/', async (req, res) => {
             values.push(req.query.b2b_client_id);
             whereClause += ` AND t.b2b_client_id = $${values.length}`;
         }
+        if (req.user && req.user.portal === 'b2b') {
+            values.push(req.user.id);
+            whereClause += ` AND t.b2b_client_id = $${values.length}`;
+        } else if (req.user && req.user.portal === 'corporate') {
+            values.push(req.user.id);
+            whereClause += ` AND t.corporate_client_id = $${values.length}`;
+        } else if (req.user && req.user.portal === 'admin') {
+            const ctx = await resolveAdminContext(req.user.id);
+            if (ctx.b2b_client_id) {
+                values.push(ctx.b2b_client_id);
+                whereClause += ` AND t.b2b_client_id = $${values.length}`;
+            } else if (ctx.corporate_client_id) {
+                values.push(ctx.corporate_client_id);
+                whereClause += ` AND t.corporate_client_id = $${values.length}`;
+            }
+        }
 
         const { rows } = await query(`
             SELECT t.*, c.company_name as "corporateClientCompany", b.company_name as "b2bClientCompany"

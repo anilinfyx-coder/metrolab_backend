@@ -16,6 +16,27 @@ router.use(authMiddleware);
 // GET /api/WaitingList — all with patient info + linked tests
 router.get('/', async (req, res) => {
     try {
+        let whereClause = `WHERE wl.deleted = false`;
+        const params = [];
+        let i = 1;
+
+        if (req.user && req.user.portal === 'b2b') {
+            whereClause += ` AND wl.b2b_client_id = $${i++}`;
+            params.push(req.user.id);
+        } else if (req.user && req.user.portal === 'corporate') {
+            whereClause += ` AND wl.corporate_client_id = $${i++}`;
+            params.push(req.user.id);
+        } else if (req.user && req.user.portal === 'admin') {
+            const ctx = await resolveAdminContext(req.user.id);
+            if (ctx.b2b_client_id) {
+                whereClause += ` AND wl.b2b_client_id = $${i++}`;
+                params.push(ctx.b2b_client_id);
+            } else if (ctx.corporate_client_id) {
+                whereClause += ` AND wl.corporate_client_id = $${i++}`;
+                params.push(ctx.corporate_client_id);
+            }
+        }
+
         const { rows } = await query(`
             SELECT wl.*,
                    p.name as patient_name, p.mobile as patient_mobile, p.dob as patient_dob,
@@ -33,9 +54,9 @@ router.get('/', async (req, res) => {
                    ), 0) AS test_count
             FROM waiting_list wl
             LEFT JOIN patient p ON p.id = wl.patient_id
-            WHERE wl.deleted = false
-            ORDER BY wl.id DESC
-        `);
+            ${whereClause}
+            ORDER BY wl.id DESC LIMIT 1000
+        `, params);
         return resp(res, '200', rows);
     } catch (err) { return resp(res, '500', err.message); }
 });

@@ -183,7 +183,7 @@ router.get('/', async (req, res) => {
                 whereClause += ' AND status = false';
             }
         }
-        const { rows } = await query(`SELECT * FROM b2b_clients ${whereClause} ORDER BY id DESC`);
+        const { rows } = await query(`SELECT * FROM b2b_clients ${whereClause} ORDER BY id DESC LIMIT 1000`);
         return resp(res, '200', rows);
     } catch (err) { return resp(res, '500', err.message); }
 });

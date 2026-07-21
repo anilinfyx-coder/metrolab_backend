@@ -41,11 +41,32 @@ async function resolveAdminContextForRequest(userId) {
 // ── GET /api/Patient ─────────────────────────────────────────
 router.get('/', async (req, res) => {
     try {
+        let whereClause = `WHERE p.deleted = false`;
+        const params = [];
+        let i = 1;
+
+        if (req.user && req.user.portal === 'b2b') {
+            whereClause += ` AND p.b2b_client_id = $${i++}`;
+            params.push(req.user.id);
+        } else if (req.user && req.user.portal === 'corporate') {
+            whereClause += ` AND p.corporate_client_id = $${i++}`;
+            params.push(req.user.id);
+        } else if (req.user && req.user.portal === 'admin') {
+            const ctx = await resolveAdminContextForRequest(req.user.id);
+            if (ctx.b2b_client_id) {
+                whereClause += ` AND p.b2b_client_id = $${i++}`;
+                params.push(ctx.b2b_client_id);
+            } else if (ctx.corporate_client_id) {
+                whereClause += ` AND p.corporate_client_id = $${i++}`;
+                params.push(ctx.corporate_client_id);
+            }
+        }
+
         const { rows } = await query(
             `SELECT p.*, b.company_name as b2b_client_name 
              FROM patient p
              LEFT JOIN b2b_clients b ON b.id = p.b2b_client_id
-             WHERE p.deleted = false ORDER BY p.id DESC`
+             ${whereClause} ORDER BY p.id DESC LIMIT 1000`, params
         );
         return resp(res, '200', rows);
     } catch (err) {
@@ -88,12 +109,29 @@ router.post('/getPatients', async (req, res) => {
         let sql = `SELECT * FROM patient WHERE deleted = false`;
         const params = [];
         let i = 1;
-        if (b2b_client_id) { sql += ` AND b2b_client_id = $${i++}`; params.push(b2b_client_id); }
+
+        if (req.user && req.user.portal === 'b2b') {
+            sql += ` AND b2b_client_id = $${i++}`; params.push(req.user.id);
+        } else if (req.user && req.user.portal === 'corporate') {
+            sql += ` AND corporate_client_id = $${i++}`; params.push(req.user.id);
+        } else if (req.user && req.user.portal === 'admin') {
+            const ctx = await resolveAdminContextForRequest(req.user.id);
+            if (ctx.b2b_client_id) {
+                sql += ` AND b2b_client_id = $${i++}`; params.push(ctx.b2b_client_id);
+            } else if (ctx.corporate_client_id) {
+                sql += ` AND corporate_client_id = $${i++}`; params.push(ctx.corporate_client_id);
+            } else if (b2b_client_id) {
+                sql += ` AND b2b_client_id = $${i++}`; params.push(b2b_client_id);
+            }
+        } else if (b2b_client_id) {
+            sql += ` AND b2b_client_id = $${i++}`; params.push(b2b_client_id);
+        }
+
         if (name)           { sql += ` AND name ILIKE $${i++}`;       params.push(`%${name}%`); }
         if (mobile)         { sql += ` AND mobile ILIKE $${i++}`;     params.push(`%${mobile}%`); }
         if (uid)            { sql += ` AND uid = $${i++}`;            params.push(uid); }
         if (status !== undefined) { sql += ` AND status = $${i++}`;   params.push(status); }
-        sql += ` ORDER BY id DESC`;
+        sql += ` ORDER BY id DESC LIMIT 500`;
         const { rows } = await query(sql, params);
         return resp(res, '200', rows);
     } catch (err) {
