@@ -22,8 +22,8 @@ router.get('/', async (req, res) => {
         const { rows } = await query(`
             SELECT 
                 ahc.*,
-                p.name, p.dob, p.gender as sex, p.mobile as tel, p.street1, p.street2,
-                p.city, p.state, p.zipcode,
+                p.name, p.dob, p.gender as sex, p.mobile as tel, p.email as patient_email, p.uid as patient_uid,
+                p.street1, p.street2, p.city, p.state, p.zipcode,
                 b2b.company_name as b2b_company_name, b2b.logo_file as b2b_logo,
                 b2b.address as b2b_address, b2b.public_phone_no as b2b_phone,
                 b2b.public_fax as b2b_fax, b2b.public_email as b2b_email, b2b.website as b2b_website,
@@ -46,8 +46,8 @@ router.get('/:id', async (req, res) => {
         const row = await queryOne(`
             SELECT 
                 ahc.*,
-                p.name, p.dob, p.gender as sex, p.mobile as tel, p.street1, p.street2,
-                p.city, p.state, p.zipcode,
+                p.name, p.dob, p.gender as sex, p.mobile as tel, p.email as patient_email, p.uid as patient_uid,
+                p.street1, p.street2, p.city, p.state, p.zipcode,
                 b2b.company_name as b2b_company_name, b2b.logo_file as b2b_logo,
                 b2b.address as b2b_address, b2b.public_phone_no as b2b_phone,
                 b2b.public_fax as b2b_fax, b2b.public_email as b2b_email, b2b.website as b2b_website,
@@ -144,9 +144,24 @@ router.delete('/:id', async (req, res) => {
     }
 });
 
-module.exports = router;
+// Download + email share the SAME builder (layout, lab branding, logo/signature).
+// Only difference: email encrypts the PDF with the patient's DOB (MMDD).
+router.post('/downloadAdultHealthCertificate', async (req, res) => {
+    try {
+        const { buildAdultHealthCertPdf } = require('../utils/adultHealthCertPdf');
+        const { id } = req.body;
+        if (!id) return resp(res, '400', 'Certificate id is required');
 
-// POST emailAdultHealthCertificate — email password-protected PDF to patient
+        const pdf = await buildAdultHealthCertPdf(id, { encrypt: false, authUser: req.user });
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename=${pdf.filename}`);
+        return res.send(pdf.buffer);
+    } catch (err) {
+        console.error('downloadAdultHealthCertificate error: ', err);
+        return resp(res, '500', err.message || 'Internal Server Error');
+    }
+});
+
 router.post('/emailAdultHealthCertificate', async (req, res) => {
     try {
         const { buildAdultHealthCertPdf } = require('../utils/adultHealthCertPdf');
@@ -154,7 +169,8 @@ router.post('/emailAdultHealthCertificate', async (req, res) => {
         const { id } = req.body;
         if (!id) return resp(res, '400', 'Certificate id is required');
 
-        const pdf = await buildAdultHealthCertPdf(id, { encrypt: true });
+        // Identical PDF to download/preview branding — password-protected for email only
+        const pdf = await buildAdultHealthCertPdf(id, { encrypt: true, authUser: req.user });
         const to = (pdf.cert.patient_email || '').trim();
         if (!to) return resp(res, '400', 'No email address found for this patient');
 
@@ -180,3 +196,5 @@ router.post('/emailAdultHealthCertificate', async (req, res) => {
         return resp(res, '500', err.message || 'Internal Server Error');
     }
 });
+
+module.exports = router;

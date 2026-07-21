@@ -6,9 +6,11 @@ const { getDatabaseLabel, isManagedDatabase } = require('./dbConfig');
 
 const labTestReportRoutes = require('./routes/labTestReport');
 
+const path = require('path');
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ── Core Routes ──────────────────────────────────────────────
 const authRouter             = require('./routes/auth');

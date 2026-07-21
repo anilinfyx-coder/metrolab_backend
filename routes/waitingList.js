@@ -122,28 +122,34 @@ router.get('/:id', async (req, res) => {
             const existingReport = await queryOne(`SELECT id FROM lab_test_category_report WHERE waiting_list_id = $1 AND lab_test_id = $2 LIMIT 1`, [row.id, testId]);
             tests[i].submitStatus = existingReport ? true : false;
             
-            // Get questions
+            // Get questions (enabled only — disabled questions hidden system-wide)
             const { rows: questions } = await query(
-                `SELECT * FROM report_questions WHERE lab_test_id = $1 AND deleted = false ORDER BY id ASC`,
+                `SELECT * FROM report_questions
+                 WHERE lab_test_id = $1 AND deleted = false AND status IS DISTINCT FROM false
+                 ORDER BY id ASC`,
                 [testId]
             );
             tests[i].testReportQuestionList = questions;
 
-            // Get parameters
+            // Get parameters (enabled only)
             const { rows: parameters } = await query(
-                `SELECT * FROM report_request_parameters WHERE lab_test_id = $1 AND deleted = false ORDER BY id ASC`,
+                `SELECT * FROM report_request_parameters
+                 WHERE lab_test_id = $1 AND deleted = false AND status IS DISTINCT FROM false
+                 ORDER BY id ASC`,
                 [testId]
             );
             tests[i].testResultParameterList = parameters;
 
-            // Get mapped specimen types (linked via specimen_type_drug_linking on lab_test_id)
+            // Get mapped specimen types (enabled links + enabled specimen types only)
             const { rows: specimens } = await query(
                 `SELECT DISTINCT st.*
                  FROM specimen_type_drug_linking stdl
                  JOIN specimen_type st ON st.id = stdl.specimen_type_id
                  WHERE stdl.lab_test_id = $1
                    AND stdl.deleted = false
+                   AND stdl.status IS DISTINCT FROM false
                    AND st.deleted = false
+                   AND st.status IS DISTINCT FROM false
                  ORDER BY st.name ASC`,
                 [testId]
             );

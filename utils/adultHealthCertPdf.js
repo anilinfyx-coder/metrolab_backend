@@ -5,12 +5,23 @@ const PDFDocument = require('pdfkit');
 const muhammara = require('muhammara');
 const { queryOne } = require('../db');
 
+const DEFAULT_LOGO_PATH = path.join(__dirname, '..', 'assets', 'metrolab-logo.png');
+const FALLBACK = {
+    company: 'Metro Lab & Clinic LLC',
+    addressLine: '3422 Georgia Avenue NW • Washington, D.C. 20010',
+    addressShort: '3422 Georgia Ave NW Washington DC 20010',
+    phone: '202.234.1234',
+    fax: '202.234.1339',
+    email: 'manager@metrolabdc.com',
+    website: 'www.metrolabdc.com',
+};
+
 function pad(n) {
     return String(n).padStart(2, '0');
 }
 
 function formatUsDate(value) {
-    if (!value) return '—';
+    if (!value) return '';
     if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(value)) {
         const [y, m, day] = value.slice(0, 10).split('-').map(Number);
         return `${m}/${day}/${y}`;
@@ -56,168 +67,365 @@ function encryptPdfBuffer(plainBuffer, userPassword) {
     }
 }
 
+function resolveUploadedImagePath(filename) {
+    if (!filename) return null;
+    const clean = String(filename).trim();
+    const normalized = clean.replace(/\\/g, '/');
+    const baseName = path.basename(normalized);
+    const bases = [
+        path.join(__dirname, '..'),
+        path.join(__dirname, '..', 'uploads'),
+        path.join(__dirname, '..', 'uploads', 'b2bClients'),
+        path.join(__dirname, '..', 'Uploads', 'b2bClients'),
+    ];
+    const candidates = [
+        clean,
+        normalized,
+        baseName,
+        path.join('uploads', baseName),
+        path.join('uploads', 'b2bClients', baseName),
+        path.join('Uploads', 'b2bClients', baseName),
+    ];
+    for (const candidate of candidates) {
+        if (!candidate) continue;
+        if (path.isAbsolute(candidate) && fs.existsSync(candidate)) return candidate;
+        for (const base of bases) {
+            const full = path.join(base, candidate);
+            if (fs.existsSync(full)) return full;
+        }
+    }
+    return null;
+}
+
+function textOrNull(value) {
+    if (value == null) return null;
+    const text = String(value).trim();
+    if (!text || text.toLowerCase() === 'null' || text.toLowerCase() === 'undefined') return null;
+    return text;
+}
+
+/** Prefer logged-in lab field; otherwise Metro Lab fallback. */
+function labOrFallback(labValue, fallback) {
+    return textOrNull(labValue) || fallback;
+}
+
+/**
+ * Resolve branding for the signed-in lab.
+ * Used by download AND email so both PDFs match the preview.
+ * Admin staff → b2b via admin_users.user_id; B2B portal → client id.
+ * Falls back to Metro Lab when no lab row is found.
+ */
+async function resolveLoggedInLab(authUser) {
+    if (!authUser || !authUser.id) return null;
+
+    let b2bId = null;
+
+    if (authUser.portal === 'b2b') {
+        b2bId = authUser.id;
+    } else {
+        // admin portal, or older tokens without portal — try admin_users first
+        const admin = await queryOne(
+            'SELECT user_id FROM admin_users WHERE id = $1 AND deleted = false LIMIT 1',
+            [authUser.id]
+        );
+        if (admin?.user_id) {
+            b2bId = admin.user_id;
+        } else if (authUser.portal !== 'admin') {
+            // last resort: treat id as b2b client id
+            const asClient = await queryOne(
+                'SELECT id FROM b2b_clients WHERE id = $1 AND deleted = false LIMIT 1',
+                [authUser.id]
+            );
+            if (asClient) b2bId = authUser.id;
+        }
+    }
+
+    if (!b2bId) return null;
+
+    return queryOne(
+        `SELECT company_name, logo_file, address, public_phone_no, public_fax,
+                public_email, website, medical_officer_signature_file_name, tagline
+         FROM b2b_clients
+         WHERE id = $1 AND deleted = false
+         LIMIT 1`,
+        [b2bId]
+    );
+}
+
+function resolveCertLogoPath(lab) {
+    const labLogo = resolveUploadedImagePath(lab?.logo_file);
+    if (labLogo) return labLogo;
+    if (fs.existsSync(DEFAULT_LOGO_PATH)) return DEFAULT_LOGO_PATH;
+    return resolveUploadedImagePath('metrolablogo.png');
+}
+
+function isMale(sex) {
+    return sex === 1 || sex === '1' || String(sex || '').toLowerCase() === 'male';
+}
+
+function isFemale(sex) {
+    return sex === 2 || sex === '2' || String(sex || '').toLowerCase() === 'female';
+}
+
+function drawCheckbox(doc, x, y, checked) {
+    doc.rect(x, y, 10, 10).lineWidth(1).strokeColor('#111').stroke();
+    if (checked) {
+        doc.font('Helvetica-Bold').fontSize(10).fillColor('#111').text('X', x + 1.5, y);
+    }
+}
+
+function drawUnderlineField(doc, x, y, width, value) {
+    const text = value ? String(value) : '';
+    doc.moveTo(x, y + 11).lineTo(x + width, y + 11).strokeColor('#111').lineWidth(0.8).stroke();
+    if (text) {
+        doc.font('Helvetica-Bold').fontSize(10).fillColor('#111')
+            .text(text, x + 2, y, { width: width - 4, align: 'center', lineBreak: false });
+    }
+}
+
 async function buildAdultHealthCertPdf(id, options = {}) {
     const cert = await queryOne(
         `SELECT 
             ahc.*,
             p.name as patient_name, p.dob as patient_dob, p.gender as sex, p.mobile as tel, p.street1, p.street2,
-            p.city, p.state, p.zipcode, p.email as patient_email,
-            b2b.company_name as b2b_company_name, b2b.logo_file as b2b_logo,
-            b2b.address as b2b_address, b2b.public_phone_no as b2b_phone,
-            b2b.public_fax as b2b_fax, b2b.public_email as b2b_email, b2b.website as b2b_website,
-            b2b.medical_officer_signature_file_name as b2b_signature
+            p.city, p.state, p.zipcode, p.email as patient_email
         FROM adult_health_certificates ahc
         LEFT JOIN patient p ON ahc.patient_id = p.id
-        LEFT JOIN b2b_clients b2b ON p.b2b_client_id = b2b.id
         WHERE ahc.id = $1 AND ahc.deleted = false`,
         [id]
     );
 
-    if (!cert) throw new Error("Certificate not found");
+    if (!cert) throw new Error('Certificate not found');
+
+    // Logged-in lab branding (admin staff → b2b via user_id, or b2b portal). Metro Lab only if missing.
+    const lab = await resolveLoggedInLab(options.authUser);
 
     return new Promise((resolve, reject) => {
         try {
-            const doc = new PDFDocument({ margin: 50, size: 'LETTER' });
+            const doc = new PDFDocument({ margin: 40, size: 'LETTER' });
             const buffers = [];
             doc.on('data', buffers.push.bind(buffers));
             doc.on('end', () => {
                 const pdfBuffer = Buffer.concat(buffers);
-                let password = null;
                 if (options.encrypt) {
-                    password = buildBirthdatePassword(cert.patient_dob);
+                    const password = buildBirthdatePassword(cert.patient_dob);
                     if (!password) {
-                        return reject(new Error("Cannot encrypt: patient DOB is invalid"));
+                        return reject(new Error('Cannot encrypt: patient DOB is invalid'));
                     }
                     const encryptedBuffer = encryptPdfBuffer(pdfBuffer, password);
-                    resolve({ buffer: encryptedBuffer, cert, filename: `Adult_Health_Certificate_${cert.id}.pdf`, password });
+                    resolve({
+                        buffer: encryptedBuffer,
+                        cert,
+                        filename: `Adult_Health_Certificate_${cert.id}.pdf`,
+                        password,
+                    });
                 } else {
                     resolve({ buffer: pdfBuffer, cert, filename: `Adult_Health_Certificate_${cert.id}.pdf` });
                 }
             });
 
-            // HEADER
-            const drawHeader = () => {
-                let y = 50;
-                
-                // Draw logo if exists
-                if (cert.b2b_logo) {
-                    const logoPath = path.join(__dirname, '..', 'uploads', cert.b2b_logo);
-                    if (fs.existsSync(logoPath)) {
-                        doc.image(logoPath, doc.page.width / 2 - 50, y, { height: 60, align: 'center' });
-                    }
-                    y += 70;
-                } else {
-                    const logoPath = path.join(__dirname, '..', 'uploads', 'metrolablogo.png');
-                    if (fs.existsSync(logoPath)) {
-                        doc.image(logoPath, doc.page.width / 2 - 100, y, { height: 60 });
-                    }
-                    doc.fontSize(24).font('Helvetica-Bold').fillColor('#333').text('METRO LAB', doc.page.width / 2, y + 20);
-                    y += 70;
+            // Layout matches the on-screen preview (same structure for download + email)
+            const left = 44;
+            const right = doc.page.width - 44;
+            const pageW = right - left;
+            let y = 32;
+
+            const company = labOrFallback(lab?.company_name, FALLBACK.company);
+            const address = labOrFallback(lab?.address, FALLBACK.addressShort);
+            const phone = labOrFallback(lab?.public_phone_no, FALLBACK.phone);
+            const fax = labOrFallback(lab?.public_fax, FALLBACK.fax);
+            const email = labOrFallback(lab?.public_email, FALLBACK.email);
+            const website = String(labOrFallback(lab?.website, FALLBACK.website)).replace(/^https?:\/\//i, '');
+            const bannerAddress = labOrFallback(lab?.address, FALLBACK.addressLine);
+            const hasLabLogo = Boolean(resolveUploadedImagePath(lab?.logo_file));
+            const logoPath = resolveCertLogoPath(lab);
+
+            // Watermark
+            doc.save();
+            doc.fillColor('#94a3b8', 0.08);
+            doc.font('Helvetica-Bold').fontSize(58);
+            doc.rotate(-28, { origin: [doc.page.width / 2, doc.page.height / 2] });
+            doc.text('METRO LAB', 80, doc.page.height / 2 - 18, { align: 'center', width: pageW + 40 });
+            doc.restore();
+            doc.fillColor('#111').opacity(1);
+
+            // Banner logo + brand
+            if (logoPath) {
+                try {
+                    doc.image(logoPath, left, y, { fit: [88, 64] });
+                } catch (err) {
+                    console.warn('Could not embed certificate logo:', err.message);
                 }
-                
-                doc.fontSize(10).font('Helvetica').fillColor('#000');
-                doc.moveTo(50, y).lineTo(doc.page.width - 50, y).strokeColor('#6c9cd4').lineWidth(2).stroke();
-                y += 5;
-                doc.text(cert.b2b_address || '3422 Georgia Avenue NW • Washington, D.C. 20010', { align: 'center' });
-                doc.text(`Phone: ${cert.b2b_phone || '202.234.1234'} • Fax: ${cert.b2b_fax || '202.234.1339'} • ${cert.b2b_email || 'manager@metrolabdc.com'}`, { align: 'center' });
-                y += 25;
-                doc.moveTo(50, y).lineTo(doc.page.width - 50, y).stroke();
-                y += 10;
-                
-                doc.fontSize(16).font('Helvetica-Bold').text(cert.b2b_company_name || 'Metro Lab & Clinic LLC', { align: 'center' });
-                doc.fontSize(11).font('Helvetica');
-                doc.text(cert.b2b_address || '3422 Georgia Ave NW Washington DC 20010', { align: 'center' });
-                doc.text(`(Tell) ${cert.b2b_phone || '202-234-1234'} (Fax) ${cert.b2b_fax || '202-234-1339'}`, { align: 'center' });
-                doc.text(cert.b2b_website || 'www.metrolabdc.com', { align: 'center' });
-                
-                return y + 40;
-            };
-
-            let cy = drawHeader();
-
-            // TITLE
-            doc.fontSize(16).font('Times-Bold').text('Adult Health Certificate', { align: 'center', underline: true });
-            cy += 40;
-
-            doc.fontSize(12).font('Times-Roman');
-
-            const fullAddress = [cert.street1, cert.street2, cert.city, cert.state, cert.zipcode].filter(Boolean).join(', ');
-            const sexStr = cert.sex == 1 ? 'Male' : cert.sex == 2 ? 'Female' : cert.sex;
-
-            // PATIENT INFO
-            doc.text(`Name: `, 50, cy, { continued: true }).font('Times-Bold').text(`  ${cert.patient_name || ''}  `, { underline: true, continued: true })
-               .font('Times-Roman').text(`        Sex: `, { continued: true }).font('Times-Bold').text(`  ${sexStr || ''}  `, { underline: true });
-            cy += 20;
-
-            doc.font('Times-Roman').text(`DOB: `, 50, cy, { continued: true }).font('Times-Bold').text(`  ${formatUsDate(cert.patient_dob)}  `, { underline: true, continued: true })
-               .font('Times-Roman').text(`        Tel #: `, { continued: true }).font('Times-Bold').text(`  ${cert.tel || ''}  `, { underline: true });
-            cy += 20;
-
-            doc.font('Times-Roman').text(`Address: `, 50, cy, { continued: true }).font('Times-Bold').text(`  ${fullAddress || '                                '}  `, { underline: true });
-            cy += 40;
-
-            // BODY
-            const drawCheckbox = (x, y, checked) => {
-                doc.rect(x, y, 10, 10).lineWidth(1).strokeColor('#000').stroke();
-                if (checked) {
-                    doc.font('Helvetica-Bold').fontSize(10).text('X', x + 2, y + 1);
-                }
-                doc.font('Times-Roman').fontSize(12);
-            };
-
-            drawCheckbox(70, cy, cert.free_from_disease);
-            doc.text('Free from communicable diseases.', 90, cy);
-            cy += 25;
-
-            drawCheckbox(70, cy, cert.satisfactory_physical);
-            doc.text('In satisfactory physical condition.', 90, cy);
-            cy += 35;
-
-            doc.text(`Tuberculin test (check one): `, 90, cy);
-            doc.font('Times-Bold').text(`  ${cert.tuberculin_test_type === 'Tine' ? 'X' : ''}  `, 250, cy, { underline: true });
-            doc.font('Times-Roman').text(` Tine`, 280, cy);
-            doc.font('Times-Bold').text(`  ${cert.tuberculin_test_type === 'PPD' ? 'X' : ''}  `, 330, cy, { underline: true });
-            doc.font('Times-Roman').text(` PPD`, 360, cy);
-            cy += 25;
-
-            doc.text(`Date planted: `, 90, cy, { continued: true }).font('Times-Bold').text(`  ${formatUsDate(cert.tuberculin_date_planted)}  `, { underline: true, continued: true })
-               .font('Times-Roman').text(`        Date read: `, { continued: true }).font('Times-Bold').text(`  ${formatUsDate(cert.tuberculin_date_read)}  `, { underline: true });
-            cy += 25;
-
-            doc.font('Times-Roman').text(`Result: `, 90, cy, { continued: true }).font('Times-Bold').text(`  ${cert.tuberculin_result || '                                '}  `, { underline: true });
-            cy += 35;
-
-            doc.font('Times-Roman').text(`Chest x-ray:`, 90, cy);
-            cy += 25;
-
-            doc.text(`Date: `, 110, cy, { continued: true }).font('Times-Bold').text(`  ${formatUsDate(cert.chest_xray_date)}  `, { underline: true, continued: true })
-               .font('Times-Roman').text(`        Result: `, { continued: true }).font('Times-Bold').text(`  ${cert.chest_xray_result || '                    '}  `, { underline: true });
-            cy += 35;
-
-            doc.font('Times-Roman').text(`Additional information:`, 50, cy);
-            cy += 20;
-            doc.font('Times-Bold').text(`${cert.additional_info || ' '}`, 50, cy, { underline: true });
-            cy += 40;
-
-            // SIGNATURE
-            doc.font('Times-Roman').text(`Name/Signature: `, 50, cy, { continued: true });
-            
-            if (cert.b2b_signature) {
-                const sigPath = path.join(__dirname, '..', 'uploads', cert.b2b_signature);
-                if (fs.existsSync(sigPath)) {
-                    doc.image(sigPath, 140, cy - 20, { height: 30 });
-                    doc.text(`                              ${cert.clinician_specialty || 'MD/PA/NP'}`, 140, cy);
-                } else {
-                    doc.font('Times-Bold').text(`  ${cert.clinician_name || ''}  `, { underline: true, continued: true }).font('Times-Roman').text(` ${cert.clinician_specialty || 'MD/PA/NP'}`);
-                }
-            } else {
-                 doc.font('Times-Bold').text(`  ${cert.clinician_name || ''}  `, { underline: true, continued: true }).font('Times-Roman').text(` ${cert.clinician_specialty || 'MD/PA/NP'}`);
             }
-            
-            doc.text(`Address: `, 350, cy, { continued: true }).font('Times-Bold').text(`  ${cert.clinician_address || '                    '}  `, { underline: true });
-            cy += 25;
 
-            doc.font('Times-Roman').text(`Date: `, 50, cy, { continued: true }).font('Times-Bold').text(`  ${formatUsDate(cert.date_of_examination)}  `, { underline: true });
+            const brandX = left + 102;
+            if (!hasLabLogo) {
+                doc.font('Helvetica-Bold').fontSize(26).fillColor('#1e293b')
+                    .text('METRO', brandX, y + 4, { continued: true });
+                doc.fillColor('#c9a227').text(' LAB');
+            } else {
+                doc.font('Helvetica-Bold').fontSize(16).fillColor('#111')
+                    .text(company, brandX, y + 8, { width: pageW - 110 });
+            }
+            doc.font('Times-Roman').fontSize(9).fillColor('#111');
+            doc.text(bannerAddress, brandX, y + 36, { width: pageW - 110 });
+            doc.text(`Phone: ${phone} • Fax: ${fax} • ${email}`, brandX, y + 48, { width: pageW - 110 });
+            y += 76;
+
+            // Blue rules
+            doc.moveTo(left, y).lineTo(right, y).strokeColor('#6c9cd4').lineWidth(2).stroke();
+            y += 4;
+            doc.moveTo(left, y).lineTo(right, y).strokeColor('#6c9cd4').lineWidth(1).stroke();
+            y += 14;
+
+            // Org block
+            doc.font('Times-Bold').fontSize(12).fillColor('#111').text(company, left, y, { align: 'center', width: pageW });
+            y += 15;
+            doc.font('Times-Roman').fontSize(10);
+            doc.text(address, left, y, { align: 'center', width: pageW });
+            y += 13;
+            doc.text(`(Tell) ${phone} (Fax) ${fax}`, left, y, { align: 'center', width: pageW });
+            y += 13;
+            doc.text(website, left, y, { align: 'center', width: pageW });
+            y += 20;
+
+            // Title
+            doc.font('Times-Bold').fontSize(16).text('Adult Health Certificate', left, y, { align: 'center', width: pageW });
+            y += 26;
+
+            // Patient: Name + Sex
+            doc.font('Times-Roman').fontSize(11);
+            doc.text('Name:', left, y + 1);
+            drawUnderlineField(doc, left + 42, y, 250, cert.patient_name);
+            doc.font('Times-Roman').fontSize(11).text('Sex:', left + 310, y + 1);
+            drawCheckbox(doc, left + 340, y + 1, isMale(cert.sex));
+            doc.font('Times-Roman').fontSize(11).text('Male', left + 358, y + 1);
+            drawCheckbox(doc, left + 408, y + 1, isFemale(cert.sex));
+            doc.font('Times-Roman').fontSize(11).text('Female', left + 426, y + 1);
+            y += 22;
+
+            // DOB / Tel
+            doc.font('Times-Roman').fontSize(11).text('DOB:', left, y + 1);
+            drawUnderlineField(doc, left + 36, y, 160, formatUsDate(cert.patient_dob));
+            doc.font('Times-Roman').fontSize(11).text('Tel #:', left + 220, y + 1);
+            drawUnderlineField(doc, left + 256, y, 230, cert.tel);
+            y += 22;
+
+            // Address with guides
+            doc.font('Times-Roman').fontSize(11).text('Address:', left, y + 1);
+            const streetW = 145;
+            const aptW = 90;
+            const cityW = 90;
+            const stateW = 55;
+            const zipW = 70;
+            let ax = left + 56;
+            drawUnderlineField(doc, ax, y, streetW, cert.street1); ax += streetW + 6;
+            drawUnderlineField(doc, ax, y, aptW, cert.street2); ax += aptW + 6;
+            drawUnderlineField(doc, ax, y, cityW, cert.city); ax += cityW + 6;
+            drawUnderlineField(doc, ax, y, stateW, cert.state); ax += stateW + 6;
+            drawUnderlineField(doc, ax, y, zipW, cert.zipcode);
+            y += 14;
+            doc.font('Times-Roman').fontSize(7).fillColor('#555');
+            ax = left + 56;
+            doc.text('Street Name/Number', ax, y, { width: streetW, align: 'center' }); ax += streetW + 6;
+            doc.text('Apt#(if applicable)', ax, y, { width: aptW, align: 'center' }); ax += aptW + 6;
+            doc.text('City', ax, y, { width: cityW, align: 'center' }); ax += cityW + 6;
+            doc.text('State', ax, y, { width: stateW, align: 'center' }); ax += stateW + 6;
+            doc.text('Zip code', ax, y, { width: zipW, align: 'center' });
+            y += 20;
+
+            // Certify
+            doc.fillColor('#111').font('Times-Roman').fontSize(11)
+                .text('I have examined the above named person and certify that he/she is:', left, y);
+            y += 18;
+
+            drawCheckbox(doc, left + 18, y, !!cert.free_from_disease);
+            doc.font('Times-Roman').fontSize(11)
+                .text('1.', left, y)
+                .text('Free from disease in communicable form.', left + 36, y);
+            y += 18;
+
+            drawCheckbox(doc, left + 18, y, !!cert.satisfactory_physical);
+            doc.font('Times-Roman').fontSize(11).text('2.', left, y);
+            doc.text(
+                'In satisfactory physical condition, this will permit, close association with children/elderly without danger to them.',
+                left + 36,
+                y,
+                { width: pageW - 36 }
+            );
+            y += 32;
+
+            doc.font('Times-Roman').fontSize(11)
+                .text('In addition to a general physical examination, the following test has been done:', left, y);
+            y += 18;
+
+            // Tuberculin
+            doc.font('Times-Roman').fontSize(11).text('Tuberculin test (check one):', left, y + 1);
+            drawCheckbox(doc, left + 168, y + 1, cert.tuberculin_test_type === 'Tine');
+            doc.font('Times-Roman').fontSize(11).text('Tine', left + 186, y + 1);
+            drawCheckbox(doc, left + 236, y + 1, cert.tuberculin_test_type === 'PPD');
+            doc.font('Times-Roman').fontSize(11).text('PPD', left + 254, y + 1);
+            y += 20;
+
+            doc.font('Times-Roman').fontSize(11).text('Date planted:', left, y + 1);
+            drawUnderlineField(doc, left + 78, y, 90, formatUsDate(cert.tuberculin_date_planted));
+            doc.font('Times-Roman').fontSize(11).text('Date read:', left + 185, y + 1);
+            drawUnderlineField(doc, left + 248, y, 90, formatUsDate(cert.tuberculin_date_read));
+            doc.font('Times-Roman').fontSize(11).text('Result:', left + 350, y + 1);
+            drawUnderlineField(doc, left + 392, y, 110, cert.tuberculin_result);
+            y += 22;
+
+            // Chest x-ray
+            const hasXray = !!(cert.chest_xray_date || cert.chest_xray_result);
+            drawCheckbox(doc, left, y + 1, hasXray);
+            doc.font('Times-Roman').fontSize(11).text('Chest x-ray:', left + 18, y + 1);
+            doc.text('Date:', left + 100, y + 1);
+            drawUnderlineField(doc, left + 132, y, 100, formatUsDate(cert.chest_xray_date));
+            doc.font('Times-Roman').fontSize(11).text('Result:', left + 250, y + 1);
+            drawUnderlineField(doc, left + 292, y, 210, cert.chest_xray_result);
+            y += 22;
+
+            // Additional info
+            drawCheckbox(doc, left, y + 1, !!cert.additional_info);
+            doc.font('Times-Roman').fontSize(11)
+                .text('Additional information, Past Medical History, Current Medications:', left + 18, y + 1);
+            y += 18;
+            doc.moveTo(left + 18, y + 14).lineTo(right, y + 14).strokeColor('#111').lineWidth(0.8).stroke();
+            if (cert.additional_info) {
+                doc.font('Helvetica').fontSize(10).text(String(cert.additional_info), left + 22, y, {
+                    width: pageW - 28,
+                    height: 14,
+                    lineBreak: false,
+                });
+            }
+            y += 32;
+
+            // Signature
+            doc.font('Times-Roman').fontSize(11).text('Name/ Signature of examining Clinician:', left, y + 1);
+            const sigX = left + 220;
+            const sigW = 200;
+            const sigPath = resolveUploadedImagePath(lab?.medical_officer_signature_file_name);
+            if (sigPath) {
+                try {
+                    doc.image(sigPath, sigX + 36, y - 16, { fit: [120, 32] });
+                } catch (_) { /* ignore */ }
+            }
+            drawUnderlineField(doc, sigX, y, sigW, cert.clinician_name);
+            const specialty = String(cert.clinician_specialty || '').toUpperCase();
+            const specLabel = ['MD', 'PA', 'NP'].join('/');
+            doc.font('Times-Roman').fontSize(11).text(specialty ? specLabel : 'MD/PA/NP', sigX + sigW + 8, y + 1);
+            y += 24;
+
+            doc.font('Times-Roman').fontSize(11).text('Date of examination:', left, y + 1);
+            drawUnderlineField(doc, left + 124, y, 140, formatUsDate(cert.date_of_examination));
+            y += 24;
+
+            doc.font('Times-Roman').fontSize(11).text('Address:', left, y + 1);
+            drawUnderlineField(doc, left + 56, y, pageW - 56, cert.clinician_address);
+
+            // Footer
+            doc.font('Times-Bold').fontSize(11)
+                .text(website, left, doc.page.height - 40, { align: 'center', width: pageW });
 
             doc.end();
         } catch (e) {
@@ -227,5 +435,5 @@ async function buildAdultHealthCertPdf(id, options = {}) {
 }
 
 module.exports = {
-    buildAdultHealthCertPdf
+    buildAdultHealthCertPdf,
 };

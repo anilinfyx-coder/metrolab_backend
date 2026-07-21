@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { query, queryOne } = require('../db');
 const { JWT_SECRET } = require('../middleware/auth');
+const { validateLoginUser } = require('../utils/loginAuth');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
@@ -12,23 +13,21 @@ router.post('/login', async (req, res) => {
     try {
         const { username, password } = req.body;
         const user = await queryOne(
-            `SELECT * FROM admin_users WHERE email = $1 AND deleted = false AND status = true LIMIT 1`,
+            `SELECT * FROM admin_users WHERE email = $1 AND deleted = false LIMIT 1`,
             [username]
         );
-        if (!user) return resp(res, '404', 'User not found');
-
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) return resp(res, '401', 'Invalid credentials');
+        const auth = await validateLoginUser(user, password);
+        if (!auth.ok) return resp(res, auth.code, auth.message);
 
         const token = jwt.sign(
-            { id: user.id, email: user.email, role_id: user.role_id, role_type_id: user.role_type_id, portal: 'admin' },
+            { id: auth.user.id, email: auth.user.email, role_id: auth.user.role_id, role_type_id: auth.user.role_type_id, portal: 'admin' },
             JWT_SECRET,
             { expiresIn: '24h' }
         );
         res.setHeader('token', token);
         return resp(res, '200', {
-            id: user.id, name: user.name, email: user.email,
-            mobile: user.mobile, role: user.role_id, portal: 'admin', token
+            id: auth.user.id, name: auth.user.name, email: auth.user.email,
+            mobile: auth.user.mobile, role: auth.user.role_id, portal: 'admin', token
         });
     } catch (err) {
         console.error(err);
@@ -41,8 +40,11 @@ router.post('/getProfile', async (req, res) => {
     try {
         const { id } = req.body;
         const user = await queryOne(
-            `SELECT u.*, c.company_name, c.support_mobile, c.support_email, 
-                    c.tagline, c.logo_file, c.primary_color_code
+            `SELECT u.*,
+                    c.company_name, c.support_mobile, c.support_email,
+                    c.tagline, c.logo_file, c.primary_color_code,
+                    c.address, c.public_phone_no, c.public_fax, c.public_email, c.website,
+                    c.medical_officer_signature_file_name
              FROM admin_users u
              LEFT JOIN b2b_clients c ON c.id = u.user_id
              WHERE u.id = $1 LIMIT 1`,
@@ -56,15 +58,24 @@ router.post('/getProfile', async (req, res) => {
 });
 
 // ── GET /api/AdminUsers ──────────────────────────────────────
+// Optional ?status=true|false — dropdowns use status=true; management lists omit it.
 router.get('/', async (req, res) => {
     try {
-        const { user_id } = req.query;
+        const { user_id, status } = req.query;
         let sql = `SELECT id, name, email, mobile, role_id, role_type_id, uid, image_file, user_id, status, deleted
                    FROM admin_users WHERE deleted = false`;
         const params = [];
         if (user_id) {
             params.push(user_id);
-            sql += ` AND user_id = $1`;
+            sql += ` AND user_id = $${params.length}`;
+        }
+        if (status !== undefined && String(status).trim() !== '') {
+            const raw = String(status).trim().toLowerCase();
+            if (raw === 'true' || raw === '1' || raw === 'active') {
+                sql += ' AND status IS DISTINCT FROM false';
+            } else if (raw === 'false' || raw === '0' || raw === 'inactive') {
+                sql += ' AND status = false';
+            }
         }
         sql += ` ORDER BY id DESC`;
         const { rows } = await query(sql, params);

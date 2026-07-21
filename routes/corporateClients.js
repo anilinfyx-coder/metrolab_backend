@@ -6,6 +6,7 @@ const { query, queryOne } = require('../db');
 const { JWT_SECRET } = require('../middleware/auth');
 const { crudRoutes } = require('./crud');
 const { sendWelcomeCorporateMail } = require('../utils/emailService');
+const { validateLoginUser } = require('../utils/loginAuth');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
@@ -13,31 +14,22 @@ const resp = (res, code, obj) => res.json({ response_code: code, obj });
 router.post('/login', async (req, res) => {
     try {
         const { username, password } = req.body;
-        // Corporate login uses email as username
         const client = await queryOne(
-            `SELECT * FROM corporate_clients WHERE email = $1 AND deleted = false AND status = true LIMIT 1`,
+            `SELECT * FROM corporate_clients WHERE email = $1 AND deleted = false LIMIT 1`,
             [username]
         );
-        if (!client) return resp(res, '404', 'Corporate Client not found');
-
-        let isMatch = false;
-        if (client.password.startsWith('$2a$') || client.password.startsWith('$2b$')) {
-            isMatch = await bcrypt.compare(password, client.password);
-        } else {
-            isMatch = (password === client.password);
-        }
-        
-        if (!isMatch) return resp(res, '401', 'Invalid credentials');
+        const auth = await validateLoginUser(client, password);
+        if (!auth.ok) return resp(res, auth.code, auth.message);
 
         const token = jwt.sign(
-            { id: client.id, email: client.email, role_id: client.role_id, portal: 'corporate' },
+            { id: auth.user.id, email: auth.user.email, role_id: auth.user.role_id, portal: 'corporate' },
             JWT_SECRET,
             { expiresIn: '24h' }
         );
         res.setHeader('token', token);
         return resp(res, '200', {
-            id: client.id, name: client.company_name, email: client.email,
-            mobile: client.mobile, portal: 'corporate', token
+            id: auth.user.id, name: auth.user.company_name, email: auth.user.email,
+            mobile: auth.user.mobile, portal: 'corporate', token
         });
     } catch (err) {
         console.error(err);
