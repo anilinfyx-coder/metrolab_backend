@@ -199,11 +199,6 @@ const sendLabTestCategoryReportMail = async (to, patientName, testName, reportUi
                 <p style="margin: 0;"><strong>Test:</strong> ${testName || '—'}</p>
                 <p style="margin: 10px 0 0 0;"><strong>Report UID:</strong> ${reportUid || '—'}</p>
             </div>
-            <div style="background-color: #fff8e6; padding: 15px; border-radius: 5px; margin: 20px 0; border: 1px solid #f0e0b2;">
-                <p style="margin: 0; color: #8a6d1d;"><strong>PDF Password:</strong></p>
-                <p style="margin: 8px 0 0 0;">To open the attached PDF, use your <strong>birthdate 4 digits</strong> as the password.</p>
-                <p style="margin: 8px 0 0 0; font-size: 13px; color: #666;">Format: <strong>MMDD</strong> (Month + Day), for example if DOB is 9/9/2003, password is <strong>0909</strong>.</p>
-            </div>
             <p>Best Regards,</p>
             ${branding.signatureHtml}
         </div>
@@ -224,11 +219,6 @@ const sendCertificateMail = async (to, patientName, certType, pdfBuffer, pdfFile
             <h2 style="color: #2980b9; text-align: center; margin-top: 0;">Your Certificate</h2>
             <p>Dear ${patientName || 'Patient'},</p>
             <p>Please find your <strong>${certType}</strong> attached to this email.</p>
-            <div style="background-color: #fff8e6; padding: 15px; border-radius: 5px; margin: 20px 0; border: 1px solid #f0e0b2;">
-                <p style="margin: 0; color: #8a6d1d;"><strong>PDF Password:</strong></p>
-                <p style="margin: 8px 0 0 0;">To open the attached PDF, use your <strong>birthdate 4 digits</strong> as the password.</p>
-                <p style="margin: 8px 0 0 0; font-size: 13px; color: #666;">Format: <strong>MMDD</strong> (Month + Day), for example if DOB is 9/9/2003, password is <strong>0909</strong>.</p>
-            </div>
             <p>Best Regards,</p>
             ${branding.signatureHtml}
         </div>

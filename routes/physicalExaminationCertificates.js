@@ -166,7 +166,6 @@ router.delete('/:id', async (req, res) => {
 });
 
 // Download + email share the SAME builder (layout, lab branding, logo/signature).
-// Only difference: email encrypts the PDF with the patient's DOB (MMDD).
 router.post('/downloadPhysicalExaminationCertificate', async (req, res) => {
     try {
         const { buildPhysicalExamCertPdf } = require('../utils/physicalExamCertPdf');
@@ -190,13 +189,9 @@ router.post('/emailPhysicalExaminationCertificate', async (req, res) => {
         const { id } = req.body;
         if (!id) return resp(res, '400', 'Certificate id is required');
 
-        const pdf = await buildPhysicalExamCertPdf(id, { encrypt: true, authUser: req.user });
+        const pdf = await buildPhysicalExamCertPdf(id, { encrypt: false, authUser: req.user });
         const to = (pdf.cert.patient_email || '').trim();
         if (!to) return resp(res, '400', 'No email address found for this patient');
-
-        if (!pdf.password) {
-            return resp(res, '400', 'Patient date of birth is required to password-protect the PDF');
-        }
 
         const ok = await sendCertificateMail(
             to,

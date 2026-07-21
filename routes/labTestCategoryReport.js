@@ -406,7 +406,7 @@ router.post('/downloadLabTestCategoryReport', async (req, res) => {
     }
 });
 
-// POST emailLabTestCategoryReport — email password-protected PDF to patient
+// POST emailLabTestCategoryReport — email PDF to patient (no password)
 router.post('/emailLabTestCategoryReport', async (req, res) => {
     try {
         const { buildLabTestReportPdf } = require('../utils/labTestReportPdf');
@@ -414,13 +414,9 @@ router.post('/emailLabTestCategoryReport', async (req, res) => {
         const { id } = req.body;
         if (!id) return resp(res, '400', 'Report id is required');
 
-        const pdf = await buildLabTestReportPdf(id, { encrypt: true });
+        const pdf = await buildLabTestReportPdf(id, { encrypt: false });
         const to = (pdf.report.patient_email || '').trim();
         if (!to) return resp(res, '400', 'No email address found for this patient');
-
-        if (!pdf.password) {
-            return resp(res, '400', 'Patient date of birth is required to password-protect the PDF');
-        }
 
         const ok = await sendLabTestCategoryReportMail(
             to,
