@@ -3,25 +3,17 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 const { query, queryOne } = require('../db');
 const { JWT_SECRET, authMiddleware } = require('../middleware/auth');
 const { sendWelcomeB2BMail } = require('../utils/emailService');
+const { uploadBuffer, getSignedUrl, generateFileName } = require('../utils/gcs');
 
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        const dir = 'uploads/b2bClients/';
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
-        }
-        cb(null, dir);
-    },
-    filename: function (req, file, cb) {
-        cb(null, Date.now() + '-' + Math.round(Math.random() * 1E9) + path.extname(file.originalname));
-    }
-});
-const upload = multer({ storage: storage });
+// Files are stored in GCS under this prefix (Cloud Run's container filesystem
+// is ephemeral and not shared across instances). Only the flat generated
+// filename is persisted in the DB, as before.
+const GCS_PREFIX = 'b2b-clients/';
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 const uploadFields = upload.fields([
     { name: 'logo_file', maxCount: 1 },
@@ -31,6 +23,31 @@ const uploadFields = upload.fields([
 ]);
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
+
+// Uploads each provided field's file to GCS and returns { [field]: fileName }.
+async function persistUploadedFiles(files) {
+    const result = {};
+    if (!files) return result;
+    for (const field of Object.keys(files)) {
+        const file = files[field][0];
+        const fileName = generateFileName(file.originalname);
+        await uploadBuffer(file.buffer, GCS_PREFIX + fileName, file.mimetype);
+        result[field] = fileName;
+    }
+    return result;
+}
+
+// GET file helper (public - no auth required) - redirects to a short-lived
+// pre-signed GCS URL rather than serving the file itself.
+router.get('/file/:filename', async (req, res) => {
+    try {
+        const url = await getSignedUrl(GCS_PREFIX + req.params.filename);
+        return res.redirect(url);
+    } catch (err) {
+        console.error(err);
+        return res.status(404).send('File not found');
+    }
+});
 
 // ── POST /api/B2bClients/login ────────────────────────────────
 router.post('/login', async (req, res) => {
@@ -115,13 +132,12 @@ router.post('/changePassword', async (req, res) => {
 router.post('/', uploadFields, async (req, res) => {
     try {
         let body = req.body || {};
-        
-        if (req.files) {
-            if (req.files.logo_file) body.logo_file = req.files.logo_file[0].filename;
-            if (req.files.report_header_file) body.report_header_file = req.files.report_header_file[0].filename;
-            if (req.files.report_footer_file) body.report_footer_file = req.files.report_footer_file[0].filename;
-            if (req.files.medical_officer_signature_file) body.medical_officer_signature_file_name = req.files.medical_officer_signature_file[0].filename;
-        }
+
+        const uploaded = await persistUploadedFiles(req.files);
+        if (uploaded.logo_file) body.logo_file = uploaded.logo_file;
+        if (uploaded.report_header_file) body.report_header_file = uploaded.report_header_file;
+        if (uploaded.report_footer_file) body.report_footer_file = uploaded.report_footer_file;
+        if (uploaded.medical_officer_signature_file) body.medical_officer_signature_file_name = uploaded.medical_officer_signature_file;
 
         const {
             role_id, company_name, contact_person_name, mobile, public_phone_no,
@@ -189,12 +205,11 @@ router.put('/:id', uploadFields, async (req, res) => {
     try {
         let body = req.body || {};
 
-        if (req.files) {
-            if (req.files.logo_file) body.logo_file = req.files.logo_file[0].filename;
-            if (req.files.report_header_file) body.report_header_file = req.files.report_header_file[0].filename;
-            if (req.files.report_footer_file) body.report_footer_file = req.files.report_footer_file[0].filename;
-            if (req.files.medical_officer_signature_file) body.medical_officer_signature_file_name = req.files.medical_officer_signature_file[0].filename;
-        }
+        const uploaded = await persistUploadedFiles(req.files);
+        if (uploaded.logo_file) body.logo_file = uploaded.logo_file;
+        if (uploaded.report_header_file) body.report_header_file = uploaded.report_header_file;
+        if (uploaded.report_footer_file) body.report_footer_file = uploaded.report_footer_file;
+        if (uploaded.medical_officer_signature_file) body.medical_officer_signature_file_name = uploaded.medical_officer_signature_file;
 
         const fields = [
             'company_name', 'contact_person_name', 'mobile', 'email', 'address', 'pincode',

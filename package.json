@@ -8,12 +8,15 @@
     "dev": "nodemon server.js",
     "migrate": "node migrate.js",
     "build": "echo \"No build step required for Node.js backend\" && exit 0",
+    "import:dump": "node import-dump.js",
+    "import:dump:resume": "node import-dump.js --resume",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@google-cloud/storage": "^7.14.0",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
     "country-state-city": "^3.2.1",

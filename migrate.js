@@ -3,21 +3,24 @@ require('dotenv').config();
 const { Pool } = require('pg');
 const fs = require('fs');
 const path = require('path');
+const { getPoolConfig, isManagedDatabase } = require('./dbConfig');
 
 const DB_NAME = process.env.DB_NAME || 'metrolab';
 
-// Step 1: Connect to default 'postgres' DB to create our database
 async function createDatabase() {
-    const adminPool = new Pool({
-        host:     process.env.DB_HOST     || 'localhost',
-        port:     parseInt(process.env.DB_PORT || '5432'),
-        database: 'postgres', // connect to default db
-        user:     process.env.DB_USER     || 'postgres',
-        password: process.env.DB_PASSWORD || 'postgres',
-    });
+    if (isManagedDatabase()) {
+        console.log('ℹ️  Using managed database (DB_URL) — skipping CREATE DATABASE.');
+        return;
+    }
+
+    const adminPool = new Pool(
+        getPoolConfig({
+            database: 'postgres',
+            connectionTimeoutMillis: 2000,
+        })
+    );
 
     try {
-        // Check if database already exists
         const result = await adminPool.query(
             `SELECT 1 FROM pg_database WHERE datname = $1`, [DB_NAME]
         );
@@ -32,15 +35,8 @@ async function createDatabase() {
     }
 }
 
-// Step 2: Connect to the new database and run the SQL schema
 async function runMigration() {
-    const pool = new Pool({
-        host:     process.env.DB_HOST     || 'localhost',
-        port:     parseInt(process.env.DB_PORT || '5432'),
-        database: DB_NAME,
-        user:     process.env.DB_USER     || 'postgres',
-        password: process.env.DB_PASSWORD || 'postgres',
-    });
+    const pool = new Pool(getPoolConfig());
 
     const sql = fs.readFileSync(path.join(__dirname, 'migrations', 'init.sql'), 'utf8');
     try {

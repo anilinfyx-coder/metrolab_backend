@@ -1,37 +1,29 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
 const { query, queryOne } = require('../db');
 const { authMiddleware } = require('../middleware/auth');
+const { uploadBuffer, deleteObject, getSignedUrl, generateFileName } = require('../utils/gcs');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
-// Set up Multer for file uploads
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        // We simulate the old ERP path or create a local uploads directory
-        const dir = path.join(__dirname, '..', 'Uploads', 'B2B Clients');
-        if (!fs.existsSync(dir)){
-            fs.mkdirSync(dir, { recursive: true });
-        }
-        cb(null, dir);
-    },
-    filename: function (req, file, cb) {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, uniqueSuffix + '-' + file.originalname);
-    }
-});
-const upload = multer({ storage: storage });
+// Files are stored in GCS under this prefix. `file_name` in the DB stays a
+// flat name (as before); the prefix is only ever applied server-side.
+const GCS_PREFIX = 'b2b-client-documents/';
 
-// GET file helper (public - no auth required so browser can open files directly)
-router.get('/file/:filename', (req, res) => {
-    const p = path.join(__dirname, '..', 'Uploads', 'B2B Clients', req.params.filename);
-    if (fs.existsSync(p)) {
-        res.sendFile(p);
-    } else {
-        res.status(404).send('File not found');
+// Uploads are buffered in memory, then pushed to GCS (Cloud Run's container
+// filesystem is ephemeral and not shared across instances).
+const upload = multer({ storage: multer.memoryStorage() });
+
+// GET file helper (public - no auth required so browser can open files directly).
+// Redirects to a short-lived pre-signed GCS URL rather than serving the file itself.
+router.get('/file/:filename', async (req, res) => {
+    try {
+        const url = await getSignedUrl(GCS_PREFIX + req.params.filename);
+        return res.redirect(url);
+    } catch (err) {
+        console.error(err);
+        return res.status(404).send('File not found');
     }
 });
 
@@ -65,7 +57,8 @@ router.post('/saveB2bClientDocument', upload.single('UploadFile'), async (req, r
         let fileName = data.fileName || null;
 
         if (req.file) {
-            fileName = req.file.filename;
+            fileName = generateFileName(req.file.originalname);
+            await uploadBuffer(req.file.buffer, GCS_PREFIX + fileName, req.file.mimetype);
         }
 
         if (data.id && data.id !== '0' && data.id !== 'undefined' && data.id !== 'null') {
@@ -73,8 +66,7 @@ router.post('/saveB2bClientDocument', upload.single('UploadFile'), async (req, r
             const existing = await queryOne(`SELECT * FROM b2b_client_document WHERE id = $1`, [data.id]);
             if (req.file && existing && existing.file_name) {
                 // Delete old file if a new one is uploaded
-                const oldPath = path.join(__dirname, '..', 'Uploads', 'B2B Clients', existing.file_name);
-                if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+                await deleteObject(GCS_PREFIX + existing.file_name);
             }
 
             await queryOne(`

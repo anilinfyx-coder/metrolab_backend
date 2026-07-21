@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { pool } = require('./db');
+const { getDatabaseLabel, isManagedDatabase } = require('./dbConfig');
 
 const labTestReportRoutes = require('./routes/labTestReport');
 
@@ -81,6 +82,8 @@ app.get('/health', async (req, res) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
     console.log(`✅ Metrolab Node.js API running on http://localhost:${PORT}`);
-    console.log(`🔗 Database: ${process.env.DB_NAME || 'metrolab'} @ ${process.env.DB_HOST || 'localhost'}:${process.env.DB_PORT || 5432}`);
-    console.log(`📋 Run "node migrate.js" first to create database tables`);
+    console.log(`🔗 Database: ${getDatabaseLabel()}`);
+    if (!isManagedDatabase()) {
+        console.log(`📋 Run "npm run migrate" first to create database tables`);
+    }
 });
