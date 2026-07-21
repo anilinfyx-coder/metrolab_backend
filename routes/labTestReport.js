@@ -31,12 +31,36 @@ router.post('/', async (req, res) => {
         if (b2b_client_id) {
             b2bClient = await queryOne('SELECT wallet_balance, is_fixed_price, fixed_price_amount FROM b2b_clients WHERE id = $1', [b2b_client_id]);
             
-            if (b2bClient && b2bClient.is_fixed_price) {
+            // 1. Check for Active Subscription
+            const activeSub = await queryOne(
+                `SELECT id FROM b2b_client_subscription 
+                 WHERE b2b_client_id = $1 
+                 AND deleted = false 
+                 AND start_date <= CURRENT_DATE 
+                 AND end_date >= CURRENT_DATE 
+                 LIMIT 1`, 
+                 [b2b_client_id]
+            );
+
+            if (activeSub) {
+                // Active subscription exists: Tests are free, no wallet deduction.
+                testPrice = 0;
+            } else if (b2bClient && b2bClient.is_fixed_price) {
+                // 2. Check for Fixed Price override
                 testPrice = parseFloat(b2bClient.fixed_price_amount || 0);
             } else {
-                const priceKey = `lab_test_${lab_test_id}_price`;
-                const priceRow = await queryOne('SELECT setting_value FROM global_settings WHERE setting_key = $1', [priceKey]);
-                testPrice = parseFloat(priceRow?.setting_value || 0);
+                // 3. Check for Test-Wise custom price
+                const customPriceRow = await queryOne(
+                    `SELECT custom_price FROM b2b_client_custom_prices WHERE b2b_client_id = $1 AND lab_test_id = $2 LIMIT 1`, 
+                    [b2b_client_id, lab_test_id]
+                );
+
+                if (customPriceRow) {
+                    testPrice = parseFloat(customPriceRow.custom_price || 0);
+                } else {
+                    // No custom price set, default to 0
+                    testPrice = 0;
+                }
             }
 
             if (testPrice > 0) {
