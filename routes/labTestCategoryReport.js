@@ -2,6 +2,11 @@ const express = require('express');
 const router = express.Router();
 const { query, queryOne } = require('../db');
 const { authMiddleware } = require('../middleware/auth');
+const {
+    applyDisplayOptionsToLabTest,
+    loadB2bLabTestAccess,
+    resolveOwnerB2bClientId,
+} = require('../utils/labTestDisplayOptions');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
@@ -64,7 +69,7 @@ router.put('/:id', async (req, res) => {
             values.push(req.body[key]);
         }
         if (updates.length === 0) return resp(res, '400', 'No fields to update');
-        
+
         values.push(req.params.id);
         const q = `UPDATE lab_test_category_report SET ${updates.join(', ')} WHERE id = $${index} RETURNING *`;
         const updated = await queryOne(q, values);
@@ -79,6 +84,9 @@ router.put('/:id', async (req, res) => {
 // POST getLabTestCategoryReportDetails
 router.post('/getLabTestCategoryReportDetails', async (req, res) => {
     try {
+        await query(`ALTER TABLE lab_test_category_report ADD COLUMN IF NOT EXISTS b2b_client_id INT`);
+        await query(`ALTER TABLE lab_test_category_report ADD COLUMN IF NOT EXISTS corporate_client_id INT`);
+
         const { id } = req.body;
 
         const report = await queryOne(`
@@ -93,8 +101,27 @@ router.post('/getLabTestCategoryReportDetails', async (req, res) => {
         }
 
         const labTest = await queryOne(`SELECT * FROM lab_tests WHERE id = $1`, [report.lab_test_id]);
-        report.labTest = labTest;
+        // Resolve owning B2B from report → waiting list → patient → corporate
+        const b2bClientId = await resolveOwnerB2bClientId({
+            b2b_client_id: report.b2b_client_id,
+            waiting_list_id: report.waiting_list_id,
+            patient_id: report.patient_id,
+            corporate_client_id: report.corporate_client_id,
+            lab_test_id: report.lab_test_id,
+            created_by_id: report.created_by_id,
+        });
+        if (b2bClientId) {
+            const access = await loadB2bLabTestAccess(b2bClientId, report.lab_test_id);
+            report.labTest = applyDisplayOptionsToLabTest(labTest, access);
+        } else {
+            report.labTest = applyDisplayOptionsToLabTest(labTest, null);
+        }
+        report.resolved_b2b_client_id = b2bClientId;
 
+        const questionFilter = b2bClientId
+            ? `rq.lab_test_id = $2 AND rq.deleted = false AND (rq.b2b_client_id = $3 OR rq.b2b_client_id IS NULL)`
+            : `rq.lab_test_id = $2 AND rq.deleted = false`;
+        const questionParams = b2bClientId ? [id, report.lab_test_id, b2bClientId] : [id, report.lab_test_id];
         const questionsQuery = `
             SELECT
                 rq.id as report_question_id,
@@ -108,13 +135,18 @@ router.post('/getLabTestCategoryReportDetails', async (req, res) => {
             LEFT JOIN lab_test_category_report_question_answer a
                 ON a.report_questions_id = rq.id
                AND a.lab_test_category_report_id = $1
-               AND a.deleted = false
-            WHERE rq.lab_test_id = $2 AND rq.deleted = false AND rq.status IS DISTINCT FROM false
+               AND a.deleted = false               
+            WHERE ${questionFilter}
+                AND rq.status IS DISTINCT FROM false
             ORDER BY rq.id ASC
         `;
-        const { rows: questions } = await query(questionsQuery, [id, report.lab_test_id]);
+        const { rows: questions } = await query(questionsQuery, questionParams);
         report.testReportQuestionList = questions;
 
+        const paramFilter = b2bClientId
+            ? `rp.lab_test_id = $2 AND rp.deleted = false AND (rp.b2b_client_id = $3 OR rp.b2b_client_id IS NULL)`
+            : `rp.lab_test_id = $2 AND rp.deleted = false`;
+        const paramParams = b2bClientId ? [id, report.lab_test_id, b2bClientId] : [id, report.lab_test_id];
         const parametersQuery = `
             SELECT
                 rp.id as report_request_parameters_id,
@@ -134,24 +166,27 @@ router.post('/getLabTestCategoryReportDetails', async (req, res) => {
             LEFT JOIN lab_test_category_report_request_parameter_value a
                 ON a.report_request_parameters_id = rp.id
                AND a.lab_test_category_report_id = $1
-               AND a.deleted = false
-            WHERE rp.lab_test_id = $2 AND rp.deleted = false AND rp.status IS DISTINCT FROM false
+               AND a.deleted = false                          
+            WHERE ${paramFilter}
+                AND rp.status IS DISTINCT FROM false
             ORDER BY rp.id ASC
         `;
-        const { rows: parameters } = await query(parametersQuery, [id, report.lab_test_id]);
+        const { rows: parameters } = await query(parametersQuery, paramParams);
         report.testResultParameterList = parameters;
 
+        const specimenFilter = b2bClientId
+            ? `stdl.lab_test_id = $1 AND stdl.deleted = false AND st.deleted = false AND (stdl.b2b_client_id = $2 OR stdl.b2b_client_id IS NULL)`
+            : `stdl.lab_test_id = $1 AND stdl.deleted = false AND st.deleted = false`;
+        const specimenParams = b2bClientId ? [report.lab_test_id, b2bClientId] : [report.lab_test_id];
         const { rows: specimens } = await query(
             `SELECT DISTINCT st.*
              FROM specimen_type_drug_linking stdl
              JOIN specimen_type st ON st.id = stdl.specimen_type_id
-             WHERE stdl.lab_test_id = $1
-               AND stdl.deleted = false
-               AND stdl.status IS DISTINCT FROM false
-               AND st.deleted = false
+             WHERE ${specimenFilter}
+             AND stdl.status IS DISTINCT FROM false              
                AND st.status IS DISTINCT FROM false
              ORDER BY st.name ASC`,
-            [report.lab_test_id]
+            specimenParams
         );
         report.specimenTypeList = specimens;
 
@@ -402,7 +437,7 @@ router.post('/getLabTestCategoryCountList', async (req, res) => {
         const { startDate, endDate } = req.body;
         // The user ID from the JWT payload
         const b2bUserId = req.user.id;
-        
+
         let queryStr = `
             SELECT 
                 l.id as lab_test_id,

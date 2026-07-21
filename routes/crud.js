@@ -69,6 +69,11 @@ const crudRoutes = (table, insertFields = []) => {
         try {
             const body = { ...req.body };
             delete body.id; // never allow client to set id
+            // These are always set by the server on create
+            delete body.status;
+            delete body.deleted;
+            delete body.creation_timestamp;
+            delete body.deleted_timestamp;
             const fields = Object.keys(body);
             if (fields.length === 0) return resp(res, '400', 'No data provided');
             const cols   = fields.join(', ');

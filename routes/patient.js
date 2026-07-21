@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { pool, query, queryOne, formatDbError, isTooManyConnectionsError } = require('../db');
 const { authMiddleware } = require('../middleware/auth');
+const { resolveAdminContext } = require('../utils/adminContext');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
@@ -33,17 +34,8 @@ async function generateNextPatientUid(dbClient) {
     throw new Error('Unable to generate a unique patient UID');
 }
 
-async function resolveAdminContext(userId) {
-    const admin = await queryOne(
-        `SELECT id, user_id, role_type_id FROM admin_users WHERE id = $1 AND deleted = false LIMIT 1`,
-        [userId]
-    );
-    return {
-        created_by_id: userId,
-        b2b_client_id: admin?.user_id || null,
-        user_id: admin?.user_id || userId,
-        role_type_id: admin?.role_type_id || null,
-    };
+async function resolveAdminContextForRequest(userId) {
+    return resolveAdminContext(userId);
 }
 
 // ── GET /api/Patient ─────────────────────────────────────────
@@ -134,7 +126,7 @@ router.post('/', async (req, res) => {
             user_id, role_type_id
         } = req.body;
 
-        const ctx = await resolveAdminContext(req.user.id);
+        const ctx = await resolveAdminContextForRequest(req.user.id);
 
         await client.query('BEGIN');
 
