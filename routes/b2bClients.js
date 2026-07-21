@@ -8,12 +8,12 @@ const { JWT_SECRET, authMiddleware } = require('../middleware/auth');
 const { sendWelcomeB2BMail, sendWalletRechargeMail } = require('../utils/emailService');
 const { validateUniqueLoginEmail, normalizeLoginEmail } = require('../utils/emailUniqueness');
 const { validateLoginUser } = require('../utils/loginAuth');
-const { uploadBuffer, getSignedUrl, generateFileName } = require('../utils/gcs');
+const { uploadBuffer, getSignedUrl, generateFileName, PREFIX } = require('../utils/gcs');
 
 // Files are stored in GCS under this prefix (Cloud Run's container filesystem
 // is ephemeral and not shared across instances). Only the flat generated
 // filename is persisted in the DB, as before.
-const GCS_PREFIX = 'b2b-clients/';
+const GCS_PREFIX = PREFIX.b2bClients;
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -41,9 +41,13 @@ async function persistUploadedFiles(files) {
 
 // GET file helper (public - no auth required) - redirects to a short-lived
 // pre-signed GCS URL rather than serving the file itself.
+// ?json=1 returns { url } instead of redirect (useful for API clients).
 router.get('/file/:filename', async (req, res) => {
     try {
         const url = await getSignedUrl(GCS_PREFIX + req.params.filename);
+        if (String(req.query.json || '') === '1') {
+            return resp(res, '200', { url, filename: req.params.filename });
+        }
         return res.redirect(url);
     } catch (err) {
         console.error(err);

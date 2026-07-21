@@ -1,43 +1,12 @@
-const fs = require('fs');
 const path = require('path');
+const { resolveLabLogoPath, resolveUploadedFilePath } = require('./uploadedFiles');
+const { PREFIX } = require('./gcs');
 
 const LOGO_CID = 'email-brand-logo';
-const DEFAULT_LOGO_PATH = path.join(__dirname, '..', 'assets', 'metrolab-logo.png');
-const FRONTEND_LOGO_PATH = path.join(__dirname, '..', '..', 'metrolab_frontend', 'public', 'login-logo.png');
 
 const B2B_BRANDING_SELECT = `
     company_name, tagline, logo_file, report_header_file, email, public_email
 `;
-
-function resolveUploadedImagePath(filename) {
-    if (!filename) return null;
-    const clean = String(filename).trim();
-    const normalized = clean.replace(/\\/g, '/');
-    const baseName = path.basename(normalized);
-    const bases = [
-        path.join(__dirname, '..'),
-        path.join(__dirname, '..', 'uploads', 'b2bClients'),
-        path.join(__dirname, '..', 'Uploads', 'b2bClients'),
-    ];
-
-    const candidates = [
-        clean,
-        normalized,
-        baseName,
-        path.join('uploads', 'b2bClients', baseName),
-        path.join('Uploads', 'b2bClients', baseName),
-    ];
-
-    for (const candidate of candidates) {
-        if (!candidate) continue;
-        if (path.isAbsolute(candidate) && fs.existsSync(candidate)) return candidate;
-        for (const base of bases) {
-            const full = path.join(base, candidate);
-            if (fs.existsSync(full)) return full;
-        }
-    }
-    return null;
-}
 
 function normalizeText(value, fallback = '') {
     if (value == null) return fallback;
@@ -48,22 +17,10 @@ function normalizeText(value, fallback = '') {
     return text;
 }
 
-function resolveLabLogoPath(lab) {
-    const uploadedLogo =
-        resolveUploadedImagePath(lab?.logo_file) ||
-        resolveUploadedImagePath(lab?.report_header_file);
-    if (uploadedLogo && !uploadedLogo.toLowerCase().endsWith('.webp')) {
-        return uploadedLogo;
-    }
-    if (fs.existsSync(DEFAULT_LOGO_PATH)) return DEFAULT_LOGO_PATH;
-    if (fs.existsSync(FRONTEND_LOGO_PATH)) return FRONTEND_LOGO_PATH;
-    return null;
-}
-
-function buildEmailBranding(lab) {
+async function buildEmailBranding(lab) {
     const companyName = normalizeText(lab?.company_name, 'Metrolab') || 'Metrolab';
     const tagline = normalizeText(lab?.tagline);
-    const logoPath = resolveLabLogoPath(lab);
+    const logoPath = await resolveLabLogoPath(lab);
 
     let logoAttachment = null;
     let headerHtml;
@@ -108,5 +65,6 @@ module.exports = {
     B2B_BRANDING_SELECT,
     buildEmailBranding,
     resolveLabLogoPath,
-    resolveUploadedImagePath,
+    resolveUploadedFilePath,
+    PREFIX,
 };
