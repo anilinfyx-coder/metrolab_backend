@@ -87,6 +87,86 @@ router.post('/login', async (req, res) => {
     }
 });
 
+// ── GET /api/B2bClients/alerts ──────────────────────────────
+router.get('/alerts', async (req, res) => {
+    try {
+        const { b2b_client_id } = req.query;
+        let clients = [];
+
+        if (b2b_client_id) {
+            const client = await queryOne(`SELECT * FROM b2b_clients WHERE id = $1 AND deleted = false`, [b2b_client_id]);
+            if (client) clients.push(client);
+        } else {
+            const { rows } = await query(`SELECT * FROM b2b_clients WHERE deleted = false`);
+            clients = rows;
+        }
+
+        const alerts = [];
+
+        for (const client of clients) {
+            // Check for subscription alerts
+            // 1. Expiring soon (end_date > today, end_date <= today + 2 days)
+            // 2. Expired (end_date < today)
+            const subscriptions = await query(
+                `SELECT * FROM b2b_client_subscription 
+                 WHERE b2b_client_id = $1 AND deleted = false
+                 ORDER BY end_date DESC`,
+                [client.id]
+            );
+
+            let hasActiveSub = false;
+            let subAlert = null;
+
+            if (subscriptions.rows.length > 0) {
+                const latestSub = subscriptions.rows[0];
+                const endDate = new Date(latestSub.end_date);
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+
+                const diffTime = endDate.getTime() - today.getTime();
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+                if (diffDays > 2) {
+                    hasActiveSub = true;
+                } else if (diffDays >= 0 && diffDays <= 2) {
+                    hasActiveSub = true;
+                    subAlert = {
+                        client,
+                        type: 'subscription_expiring',
+                        message: `Your subscription expires in ${diffDays} day(s) on ${endDate.toISOString().split('T')[0]}. Please renew soon.`
+                    };
+                } else {
+                    subAlert = {
+                        client,
+                        type: 'subscription_expired',
+                        message: `Your subscription expired on ${endDate.toISOString().split('T')[0]}. Please renew or add wallet balance.`
+                    };
+                }
+            }
+
+            if (subAlert) {
+                alerts.push(subAlert);
+            }
+
+            // Wallet balance check if they have NO active subscription (this means they rely on wallet deduction or fixed price from wallet)
+            if (!hasActiveSub) {
+                const balance = parseFloat(client.wallet_balance || 0);
+                if (balance <= 0) {
+                    alerts.push({
+                        client,
+                        type: 'wallet_empty',
+                        message: `Your wallet balance is $${balance}. Please add funds to continue booking tests.`
+                    });
+                }
+            }
+        }
+
+        return resp(res, '200', alerts);
+    } catch (err) { 
+        return resp(res, '500', err.message); 
+    }
+});
+
 // ── GET /api/B2bClients ───────────────────────────────────────
 router.get('/', async (req, res) => {
     try {
