@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { query, queryOne } = require('../db');
 const { JWT_SECRET, authMiddleware } = require('../middleware/auth');
+const { validateLoginUser, isMainSuperAdmin } = require('../utils/loginAuth');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
@@ -12,23 +13,21 @@ router.post('/login', async (req, res) => {
     try {
         const { username, password } = req.body;
         const user = await queryOne(
-            `SELECT * FROM super_admin WHERE email = $1 AND deleted = false AND status = true LIMIT 1`,
+            `SELECT * FROM super_admin WHERE email = $1 AND deleted = false LIMIT 1`,
             [username]
         );
-        if (!user) return resp(res, '404', 'Super Admin not found');
-
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch) return resp(res, '401', 'Invalid credentials');
+        const auth = await validateLoginUser(user, password);
+        if (!auth.ok) return resp(res, auth.code, auth.message);
 
         const token = jwt.sign(
-            { id: user.id, email: user.email, role_id: user.role_id, role_type_id: user.role_type_id, portal: 'superadmin' },
+            { id: auth.user.id, email: auth.user.email, role_id: auth.user.role_id, role_type_id: auth.user.role_type_id, portal: 'superadmin' },
             JWT_SECRET,
             { expiresIn: '24h' }
         );
         res.setHeader('token', token);
         return resp(res, '200', {
-            id: user.id, name: user.name, email: user.email,
-            mobile: user.mobile, role: user.role_id, portal: 'superadmin', token
+            id: auth.user.id, name: auth.user.name, email: auth.user.email,
+            mobile: auth.user.mobile, role: auth.user.role_id, portal: 'superadmin', token
         });
     } catch (err) {
         console.error(err);
@@ -155,6 +154,16 @@ router.post('/', async (req, res) => {
 // ── PUT /api/SuperAdmin/:id ──────────────────────────────────
 router.put('/:id', async (req, res) => {
     try {
+        const existing = await queryOne(
+            `SELECT id, role_id FROM super_admin WHERE id = $1 AND deleted = false LIMIT 1`,
+            [req.params.id]
+        );
+        if (!existing) return resp(res, '404', 'Super Admin not found');
+
+        if (isMainSuperAdmin(existing) && req.body.status === false) {
+            return resp(res, '400', 'Main Super Admin account cannot be disabled.');
+        }
+
         const { name, email, mobile, password, role_id, status } = req.body;
         let setClause = 'name = COALESCE($1, name), email = COALESCE($2, email), mobile = COALESCE($3, mobile), role_id = COALESCE($4, role_id), status = COALESCE($5, status)';
         const values = [name, email, mobile, role_id, status];

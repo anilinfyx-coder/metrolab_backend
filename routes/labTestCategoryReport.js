@@ -109,7 +109,7 @@ router.post('/getLabTestCategoryReportDetails', async (req, res) => {
                 ON a.report_questions_id = rq.id
                AND a.lab_test_category_report_id = $1
                AND a.deleted = false
-            WHERE rq.lab_test_id = $2 AND rq.deleted = false
+            WHERE rq.lab_test_id = $2 AND rq.deleted = false AND rq.status IS DISTINCT FROM false
             ORDER BY rq.id ASC
         `;
         const { rows: questions } = await query(questionsQuery, [id, report.lab_test_id]);
@@ -135,7 +135,7 @@ router.post('/getLabTestCategoryReportDetails', async (req, res) => {
                 ON a.report_request_parameters_id = rp.id
                AND a.lab_test_category_report_id = $1
                AND a.deleted = false
-            WHERE rp.lab_test_id = $2 AND rp.deleted = false
+            WHERE rp.lab_test_id = $2 AND rp.deleted = false AND rp.status IS DISTINCT FROM false
             ORDER BY rp.id ASC
         `;
         const { rows: parameters } = await query(parametersQuery, [id, report.lab_test_id]);
@@ -145,7 +145,11 @@ router.post('/getLabTestCategoryReportDetails', async (req, res) => {
             `SELECT DISTINCT st.*
              FROM specimen_type_drug_linking stdl
              JOIN specimen_type st ON st.id = stdl.specimen_type_id
-             WHERE stdl.lab_test_id = $1 AND stdl.deleted = false AND st.deleted = false
+             WHERE stdl.lab_test_id = $1
+               AND stdl.deleted = false
+               AND stdl.status IS DISTINCT FROM false
+               AND st.deleted = false
+               AND st.status IS DISTINCT FROM false
              ORDER BY st.name ASC`,
             [report.lab_test_id]
         );

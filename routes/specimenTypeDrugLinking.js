@@ -7,9 +7,10 @@ const { query, queryOne } = require('../db');
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
 // GET /api/SpecimenTypeDrugLinking?lab_test_id=X
+// Optional ?status=true — dropdowns hide disabled links; management lists omit it.
 router.get('/', async (req, res) => {
     try {
-        const { lab_test_id, drug_id, specimen_type_id } = req.query;
+        const { lab_test_id, drug_id, specimen_type_id, status } = req.query;
         let where = 'WHERE stdl.deleted = false';
         const values = [];
         let idx = 1;
@@ -26,6 +27,14 @@ router.get('/', async (req, res) => {
         if (specimen_type_id) {
             where += ` AND stdl.specimen_type_id = $${idx++}`;
             values.push(specimen_type_id);
+        }
+        if (status !== undefined && String(status).trim() !== '') {
+            const raw = String(status).trim().toLowerCase();
+            if (raw === 'true' || raw === '1' || raw === 'active') {
+                where += ' AND stdl.status IS DISTINCT FROM false AND (st.status IS DISTINCT FROM false OR st.id IS NULL)';
+            } else if (raw === 'false' || raw === '0' || raw === 'inactive') {
+                where += ' AND stdl.status = false';
+            }
         }
 
         // JOIN with specimen_type to get name

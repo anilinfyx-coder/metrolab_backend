@@ -19,6 +19,19 @@ const crudRoutes = (table, insertFields = []) => {
             let whereClause = "WHERE deleted = false";
             const values = [];
             let index = 1;
+
+            // Dropdown/consumer lists: ?status=true → only enabled rows.
+            // Management lists omit status and still receive all non-deleted rows.
+            if (req.query.status !== undefined && String(req.query.status).trim() !== '') {
+                const raw = String(req.query.status).trim().toLowerCase();
+                const wantActive = raw === 'true' || raw === '1' || raw === 'active';
+                const wantInactive = raw === 'false' || raw === '0' || raw === 'inactive';
+                if (wantActive) {
+                    whereClause += ` AND status IS DISTINCT FROM false`;
+                } else if (wantInactive) {
+                    whereClause += ` AND status = false`;
+                }
+            }
             
             // Allow basic filtering by known keys
             const filterable = ['lab_test_id', 'drug_id', 'b2b_client_id', 'corporate_client_id', 'specimen_type_id', 'country_id', 'state_id', 'city_id', 'district_id'];

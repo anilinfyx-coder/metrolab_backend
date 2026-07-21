@@ -1,54 +1,107 @@
 const express = require('express');
 const router = express.Router();
-const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { query, queryOne } = require('../db');
+const { queryOne } = require('../db');
 const { JWT_SECRET } = require('../middleware/auth');
+const { authenticateByEmail } = require('../utils/loginAuth');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
-
-async function passwordMatches(input, stored) {
-    if (!stored) return false;
-    if (/^\$2[aby]\$/.test(stored)) {
-        return bcrypt.compare(input, stored);
-    }
-    return input === stored;
-}
 
 router.post('/login', async (req, res) => {
     try {
         const { username, password } = req.body;
-        
-        // Check super_admin
-        let user = await queryOne(`SELECT * FROM super_admin WHERE email = $1 AND deleted = false AND status = true LIMIT 1`, [username]);
-        if (user && await passwordMatches(password, user.password)) {
-            const token = jwt.sign({ id: user.id, email: user.email, role_id: user.role_id, role_type_id: user.role_type_id, portal: 'superadmin' }, JWT_SECRET, { expiresIn: '24h' });
-            return resp(res, '200', { id: user.id, name: user.name || user.first_name, email: user.email, role: user.role_id, portal: 'superadmin', token });
+        if (!username || !password) {
+            return resp(res, '400', 'Username and password are required');
         }
-        
-        // Check admin_users
-        user = await queryOne(`SELECT * FROM admin_users WHERE email = $1 AND deleted = false AND status = true LIMIT 1`, [username]);
-        if (user && await passwordMatches(password, user.password)) {
-            const token = jwt.sign({ id: user.id, email: user.email, role_id: user.role_id, role_type_id: user.role_type_id, portal: 'admin' }, JWT_SECRET, { expiresIn: '24h' });
-            return resp(res, '200', { id: user.id, name: user.name || user.first_name, email: user.email, role: user.role_id, portal: 'admin', token });
-        }
-        
-        // Check b2b_clients
-        user = await queryOne(`SELECT * FROM b2b_clients WHERE email = $1 AND deleted = false AND status = true LIMIT 1`, [username]);
-        if (user && await passwordMatches(password, user.password)) {
-            const token = jwt.sign({ id: user.id, email: user.email, role_id: user.role_id, role_type_id: user.role_type_id, portal: 'b2b' }, JWT_SECRET, { expiresIn: '24h' });
-            return resp(res, '200', { id: user.id, name: user.company_name || user.lab_name || user.first_name, email: user.email, role: user.role_id, portal: 'b2b', token });
-        }
-        
-        // Check corporate_clients
-        user = await queryOne(`SELECT * FROM corporate_clients WHERE email = $1 AND deleted = false AND status = true LIMIT 1`, [username]);
-        if (user && await passwordMatches(password, user.password)) {
-            const token = jwt.sign({ id: user.id, email: user.email, role_id: user.role_id, role_type_id: user.role_type_id, portal: 'corporate' }, JWT_SECRET, { expiresIn: '24h' });
-            return resp(res, '200', { id: user.id, name: user.company_name || user.first_name, email: user.email, role: user.role_id, portal: 'corporate', token });
-        }
-        
-        return resp(res, '401', 'Invalid credentials');
 
+        const tables = [
+            'super_admin',
+            'admin_users',
+            'b2b_clients',
+            'corporate_clients',
+        ];
+
+        for (const table of tables) {
+            const attempt = await authenticateByEmail(queryOne, table, username, password);
+            if (!attempt.found) continue;
+
+            const { result } = attempt;
+            if (!result.ok) {
+                return resp(res, result.code, result.message);
+            }
+
+            const user = result.user;
+            let portal;
+            let payload;
+
+            if (table === 'super_admin') {
+                portal = 'superadmin';
+                payload = {
+                    id: user.id,
+                    name: user.name || user.first_name,
+                    email: user.email,
+                    role: user.role_id,
+                    portal,
+                };
+            } else if (table === 'admin_users') {
+                portal = 'admin';
+                let b2bBranding = null;
+                if (user.user_id) {
+                    b2bBranding = await queryOne(
+                        `SELECT company_name, tagline, logo_file FROM b2b_clients WHERE id = $1 AND deleted = false LIMIT 1`,
+                        [user.user_id]
+                    );
+                }
+                payload = {
+                    id: user.id,
+                    name: user.name || user.first_name,
+                    email: user.email,
+                    role: user.role_id,
+                    portal,
+                    user_id: user.user_id || null,
+                    company_name: b2bBranding?.company_name || null,
+                    tagline: b2bBranding?.tagline || null,
+                    logo_file: b2bBranding?.logo_file || null,
+                };
+            } else if (table === 'b2b_clients') {
+                portal = 'b2b';
+                payload = {
+                    id: user.id,
+                    name: user.company_name || user.lab_name || user.first_name,
+                    company_name: user.company_name,
+                    email: user.email,
+                    role: user.role_id,
+                    portal,
+                    logo_file: user.logo_file || null,
+                    tagline: user.tagline || null,
+                };
+            } else {
+                portal = 'corporate';
+                payload = {
+                    id: user.id,
+                    name: user.company_name || user.first_name,
+                    email: user.email,
+                    role: user.role_id,
+                    portal,
+                };
+            }
+
+            const token = jwt.sign(
+                {
+                    id: user.id,
+                    email: user.email,
+                    role_id: user.role_id,
+                    role_type_id: user.role_type_id,
+                    portal,
+                },
+                JWT_SECRET,
+                { expiresIn: '24h' }
+            );
+            res.setHeader('token', token);
+            return resp(res, '200', { ...payload, token });
+        }
+
+        return resp(res, '401', 'Invalid credentials');
     } catch (err) {
         console.error(err);
         return resp(res, '500', err.message);

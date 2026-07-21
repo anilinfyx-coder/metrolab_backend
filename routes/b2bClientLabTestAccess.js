@@ -5,14 +5,26 @@ const { query, queryOne } = require('../db');
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
 // GET /api/B2bClientLabTestAccess?b2b_client_id=X
+// Optional ?status=true — only access rows that are enabled (and linked lab test enabled when status=true).
 router.get('/', async (req, res) => {
     try {
-        const { b2b_client_id } = req.query;
-        let sql = `SELECT * FROM b2b_client_lab_test_access WHERE deleted = false`;
+        const { b2b_client_id, status } = req.query;
+        let sql = `SELECT a.*
+                   FROM b2b_client_lab_test_access a
+                   LEFT JOIN lab_tests lt ON lt.id = a.lab_test_id
+                   WHERE a.deleted = false`;
         const params = [];
         if (b2b_client_id) {
             params.push(b2b_client_id);
-            sql += ` AND b2b_client_id = $${params.length}`;
+            sql += ` AND a.b2b_client_id = $${params.length}`;
+        }
+        if (status !== undefined && String(status).trim() !== '') {
+            const raw = String(status).trim().toLowerCase();
+            if (raw === 'true' || raw === '1' || raw === 'active') {
+                sql += ' AND a.status IS DISTINCT FROM false AND lt.status IS DISTINCT FROM false AND lt.deleted = false';
+            } else if (raw === 'false' || raw === '0' || raw === 'inactive') {
+                sql += ' AND a.status = false';
+            }
         }
         const { rows } = await query(sql, params);
         return resp(res, '200', rows);

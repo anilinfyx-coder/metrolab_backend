@@ -260,7 +260,11 @@ async function resolveLabTestIdsForEmployee(b2bClientId, selections) {
         `SELECT lt.id, lt.name
          FROM b2b_client_lab_test_access a
          JOIN lab_tests lt ON lt.id = a.lab_test_id
-         WHERE a.b2b_client_id = $1 AND a.deleted = false AND lt.deleted = false
+         WHERE a.b2b_client_id = $1
+           AND a.deleted = false
+           AND a.status IS DISTINCT FROM false
+           AND lt.deleted = false
+           AND lt.status IS DISTINCT FROM false
          ORDER BY lt.id ASC`,
         [b2bClientId]
     );

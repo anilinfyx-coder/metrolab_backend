@@ -6,6 +6,7 @@ const multer = require('multer');
 const { query, queryOne } = require('../db');
 const { JWT_SECRET, authMiddleware } = require('../middleware/auth');
 const { sendWelcomeB2BMail } = require('../utils/emailService');
+const { validateLoginUser } = require('../utils/loginAuth');
 const { uploadBuffer, getSignedUrl, generateFileName } = require('../utils/gcs');
 
 // Files are stored in GCS under this prefix (Cloud Run's container filesystem
@@ -53,33 +54,29 @@ router.get('/file/:filename', async (req, res) => {
 router.post('/login', async (req, res) => {
     try {
         const { username, password } = req.body;
-        // B2B login uses email as username
         const client = await queryOne(
-            `SELECT * FROM b2b_clients WHERE email = $1 AND deleted = false AND status = true LIMIT 1`,
+            `SELECT * FROM b2b_clients WHERE email = $1 AND deleted = false LIMIT 1`,
             [username]
         );
-        if (!client) return resp(res, '404', 'B2B Client not found');
-
-        // Note: Ideally B2B passwords should be hashed. Using simple check if raw (can be updated to bcrypt)
-        // If password is not hashed yet, this compares raw strings. If hashed, use bcrypt.
-        let isMatch = false;
-        if (client.password.startsWith('$2a$') || client.password.startsWith('$2b$')) {
-            isMatch = await bcrypt.compare(password, client.password);
-        } else {
-            isMatch = (password === client.password);
-        }
-
-        if (!isMatch) return resp(res, '401', 'Invalid credentials');
+        const auth = await validateLoginUser(client, password);
+        if (!auth.ok) return resp(res, auth.code, auth.message);
 
         const token = jwt.sign(
-            { id: client.id, email: client.email, role_id: client.role_id, portal: 'b2b' },
+            { id: auth.user.id, email: auth.user.email, role_id: auth.user.role_id, portal: 'b2b' },
             JWT_SECRET,
             { expiresIn: '24h' }
         );
         res.setHeader('token', token);
         return resp(res, '200', {
-            id: client.id, name: client.company_name, email: client.email,
-            mobile: client.mobile, portal: 'b2b', token
+            id: auth.user.id,
+            name: auth.user.company_name,
+            company_name: auth.user.company_name,
+            email: auth.user.email,
+            mobile: auth.user.mobile,
+            portal: 'b2b',
+            token,
+            logo_file: auth.user.logo_file || null,
+            tagline: auth.user.tagline || null,
         });
     } catch (err) {
         console.error(err);
@@ -168,9 +165,19 @@ router.get('/alerts', async (req, res) => {
 });
 
 // ── GET /api/B2bClients ───────────────────────────────────────
+// Optional ?status=true|false — dropdowns use status=true; management lists omit it.
 router.get('/', async (req, res) => {
     try {
-        const { rows } = await query(`SELECT * FROM b2b_clients WHERE deleted = false ORDER BY id DESC`);
+        let whereClause = 'WHERE deleted = false';
+        if (req.query.status !== undefined && String(req.query.status).trim() !== '') {
+            const raw = String(req.query.status).trim().toLowerCase();
+            if (raw === 'true' || raw === '1' || raw === 'active') {
+                whereClause += ' AND status IS DISTINCT FROM false';
+            } else if (raw === 'false' || raw === '0' || raw === 'inactive') {
+                whereClause += ' AND status = false';
+            }
+        }
+        const { rows } = await query(`SELECT * FROM b2b_clients ${whereClause} ORDER BY id DESC`);
         return resp(res, '200', rows);
     } catch (err) { return resp(res, '500', err.message); }
 });
@@ -269,7 +276,7 @@ router.get('/:id', async (req, res) => {
         const row = await queryOne(
             `SELECT id, role_id, company_name, contact_person_name, mobile, public_phone_no,
                     email, public_email, public_fax, address, support_mobile, support_email,
-                    support_person_name, tagline, primary_color_code, website,
+                    support_person_name, tagline, logo_file, primary_color_code, website,
                     smtp_server, smtp_port, smtp_email, smtp_password, status, deleted,
                     wallet_balance, is_fixed_price, fixed_price_amount
              FROM b2b_clients WHERE id = $1 LIMIT 1`,

@@ -51,10 +51,20 @@ async function ensureLabTestCommercialColumns() {
 }
 
 // ── GET /api/LabTests ─────────────────────────────────────────
+// Optional ?status=true|false — dropdowns use status=true; management lists omit it.
 router.get('/', async (req, res) => {
     try {
         await ensureLabTestCommercialColumns();
-        const { rows } = await query(`SELECT * FROM lab_tests WHERE deleted = false ORDER BY id DESC`);
+        let whereClause = 'WHERE deleted = false';
+        if (req.query.status !== undefined && String(req.query.status).trim() !== '') {
+            const raw = String(req.query.status).trim().toLowerCase();
+            if (raw === 'true' || raw === '1' || raw === 'active') {
+                whereClause += ' AND status IS DISTINCT FROM false';
+            } else if (raw === 'false' || raw === '0' || raw === 'inactive') {
+                whereClause += ' AND status = false';
+            }
+        }
+        const { rows } = await query(`SELECT * FROM lab_tests ${whereClause} ORDER BY id DESC`);
         return resp(res, '200', rows);
     } catch (err) { return resp(res, '500', err.message); }
 });
