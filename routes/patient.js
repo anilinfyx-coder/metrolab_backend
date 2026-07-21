@@ -3,6 +3,15 @@ const router = express.Router();
 const { pool, query, queryOne, formatDbError, isTooManyConnectionsError } = require('../db');
 const { authMiddleware } = require('../middleware/auth');
 const { resolveAdminContext } = require('../utils/adminContext');
+const { encryptPII, decryptPII } = require('../utils/cryptoUtils');
+
+function mapPatient(p) {
+    if (!p) return p;
+    if (p.driving_license) p.driving_license = decryptPII(p.driving_license);
+    if (p.ssn) p.ssn = decryptPII(p.ssn);
+    if (p.dob) p.dob = decryptPII(p.dob);
+    return p;
+}
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
@@ -68,7 +77,7 @@ router.get('/', async (req, res) => {
              LEFT JOIN b2b_clients b ON b.id = p.b2b_client_id
              ${whereClause} ORDER BY p.id DESC LIMIT 1000`, params
         );
-        return resp(res, '200', rows);
+        return resp(res, '200', rows.map(mapPatient));
     } catch (err) {
         return resp(res, '500', err.message);
     }
@@ -96,7 +105,7 @@ router.get('/search', async (req, res) => {
         sql += ` ORDER BY id DESC LIMIT 1`;
         const patient = await queryOne(sql, params);
         if (!patient) return resp(res, '404', 'Patient not found');
-        return resp(res, '200', patient);
+        return resp(res, '200', mapPatient(patient));
     } catch (err) {
         return resp(res, '500', err.message);
     }
@@ -133,7 +142,7 @@ router.post('/getPatients', async (req, res) => {
         if (status !== undefined) { sql += ` AND status = $${i++}`;   params.push(status); }
         sql += ` ORDER BY id DESC LIMIT 500`;
         const { rows } = await query(sql, params);
-        return resp(res, '200', rows);
+        return resp(res, '200', rows.map(mapPatient));
     } catch (err) {
         return resp(res, '500', err.message);
     }
@@ -147,7 +156,7 @@ router.get('/:id', async (req, res) => {
             [req.params.id]
         );
         if (!patient) return resp(res, '404', 'Patient not found');
-        return resp(res, '200', patient);
+        return resp(res, '200', mapPatient(patient));
     } catch (err) {
         return resp(res, '500', err.message);
     }
@@ -193,18 +202,18 @@ router.post('/', async (req, res) => {
                 b2b_client_id || ctx.b2b_client_id,
                 patientUid,
                 name,
-                driving_license,
+                encryptPII(driving_license),
                 mobile,
                 email,
                 gender,
-                dob,
+                encryptPII(dob),
                 street1,
                 street2,
                 city,
                 state,
                 zipcode,
                 driving_license_state,
-                ssn,
+                encryptPII(ssn),
                 ctx.created_by_id,
                 user_id || ctx.user_id,
                 role_type_id || ctx.role_type_id,
@@ -212,7 +221,7 @@ router.post('/', async (req, res) => {
         );
 
         await client.query('COMMIT');
-        return resp(res, '200', insert.rows[0]);
+        return resp(res, '200', mapPatient(insert.rows[0]));
     } catch (err) {
         if (client) {
             try { await client.query('ROLLBACK'); } catch (_) { /* no active transaction */ }
@@ -251,11 +260,11 @@ router.put('/:id', async (req, res) => {
                 ssn = COALESCE($13, ssn),
                 status = COALESCE($14, status)
              WHERE id = $15 RETURNING *`,
-            [name, driving_license, mobile, email, gender, dob,
-             street1, street2, city, state, zipcode, driving_license_state, ssn, status,
+            [name, driving_license ? encryptPII(driving_license) : null, mobile, email, gender, dob ? encryptPII(dob) : null,
+             street1, street2, city, state, zipcode, driving_license_state, ssn ? encryptPII(ssn) : null, status,
              req.params.id]
         );
-        return resp(res, '200', patient);
+        return resp(res, '200', mapPatient(patient));
     } catch (err) {
         return resp(res, '500', err.message);
     }
