@@ -2,25 +2,16 @@ const express = require('express');
 const router = express.Router();
 const { query, queryOne } = require('../db');
 const { authMiddleware } = require('../middleware/auth');
+const { resolveAdminContext } = require('../utils/adminContext');
+const {
+    applyDisplayOptionsToLabTest,
+    loadB2bLabTestAccess,
+    resolveOwnerB2bClientId,
+} = require('../utils/labTestDisplayOptions');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
 router.use(authMiddleware);
-
-async function resolveAdminContext(userId) {
-    const admin = await queryOne(
-        `SELECT id, user_id, role_type_id
-         FROM admin_users
-         WHERE id = $1 AND deleted = false
-         LIMIT 1`,
-        [userId]
-    );
-    return {
-        b2b_client_id: admin?.user_id || null,
-        user_id: admin?.user_id || userId,
-        role_type_id: admin?.role_type_id || null,
-    };
-}
 
 // GET /api/WaitingList — all with patient info + linked tests
 router.get('/', async (req, res) => {
@@ -106,9 +97,21 @@ router.get('/:id', async (req, res) => {
         );
         if (!row) return resp(res, '404', 'Waiting list entry not found');
 
+        // Resolve owning B2B (supports B2B staff + corporate-linked admin users)
+        const ownerB2bClientId = await resolveOwnerB2bClientId({
+            b2b_client_id: row.b2b_client_id,
+            waiting_list_id: row.id,
+            patient_id: row.patient_id,
+            corporate_client_id: row.corporate_client_id,
+            created_by_id: row.created_by_id,
+        });
+
         // Get linked lab tests and their detailed structures
         const { rows: tests } = await query(
-            `SELECT wtl.id as waiting_test_id, wtl.status as waiting_test_status, lt.*
+            `SELECT wtl.id as waiting_test_id,
+                    wtl.status as waiting_test_status,
+                    wtl.b2b_client_id as waiting_test_b2b_client_id,
+                    lt.*
              FROM waiting_test_lab_test wtl
              JOIN lab_tests lt ON lt.id = wtl.lab_test_id
              WHERE wtl.waiting_list_id = $1 AND wtl.deleted = false`,
@@ -117,46 +120,71 @@ router.get('/:id', async (req, res) => {
 
         for (let i = 0; i < tests.length; i++) {
             const testId = tests[i].id;
-            
+            const b2bClientId = ownerB2bClientId
+                || (tests[i].waiting_test_b2b_client_id
+                    ? Number(tests[i].waiting_test_b2b_client_id)
+                    : null);
+
             // Check if test report is already submitted
             const existingReport = await queryOne(`SELECT id FROM lab_test_category_report WHERE waiting_list_id = $1 AND lab_test_id = $2 LIMIT 1`, [row.id, testId]);
             tests[i].submitStatus = existingReport ? true : false;
-            
-            // Get questions (enabled only — disabled questions hidden system-wide)
+
+            // Apply B2B display options when customized; otherwise keep superadmin defaults
+            if (b2bClientId) {
+                const access = await loadB2bLabTestAccess(b2bClientId, testId);
+                tests[i] = applyDisplayOptionsToLabTest(tests[i], access);
+            }
+            tests[i].resolved_b2b_client_id = b2bClientId;
+
+            // Get questions
+            const questionFilter = b2bClientId
+                ? `lab_test_id = $1 AND deleted = false AND (b2b_client_id = $2 OR b2b_client_id IS NULL)`
+                : `lab_test_id = $1 AND deleted = false`;
+            const questionParams = b2bClientId ? [testId, b2bClientId] : [testId];
             const { rows: questions } = await query(
                 `SELECT * FROM report_questions
-                 WHERE lab_test_id = $1 AND deleted = false AND status IS DISTINCT FROM false
+                 WHERE ${questionFilter} AND status IS DISTINCT FROM false
                  ORDER BY id ASC`,
-                [testId]
+                questionParams
             );
             tests[i].testReportQuestionList = questions;
 
             // Get parameters (enabled only)
+            const paramFilter = b2bClientId
+                ? `lab_test_id = $1 AND deleted = false AND (b2b_client_id = $2 OR b2b_client_id IS NULL)`
+                : `lab_test_id = $1 AND deleted = false`;
+            const paramParams = b2bClientId ? [testId, b2bClientId] : [testId];
             const { rows: parameters } = await query(
                 `SELECT * FROM report_request_parameters
-                 WHERE lab_test_id = $1 AND deleted = false AND status IS DISTINCT FROM false
+                 WHERE ${paramFilter} AND status IS DISTINCT FROM false
                  ORDER BY id ASC`,
-                [testId]
+                paramParams
             );
             tests[i].testResultParameterList = parameters;
 
             // Get mapped specimen types (enabled links + enabled specimen types only)
+            const specimenFilter = b2bClientId
+                ? `stdl.lab_test_id = $1 AND stdl.deleted = false AND st.deleted = false AND (stdl.b2b_client_id = $2 OR stdl.b2b_client_id IS NULL)`
+                : `stdl.lab_test_id = $1 AND stdl.deleted = false AND st.deleted = false`;
+            const specimenParams = b2bClientId ? [testId, b2bClientId] : [testId];
             const { rows: specimens } = await query(
                 `SELECT DISTINCT st.*
                  FROM specimen_type_drug_linking stdl
                  JOIN specimen_type st ON st.id = stdl.specimen_type_id
-                 WHERE stdl.lab_test_id = $1
-                   AND stdl.deleted = false
-                   AND stdl.status IS DISTINCT FROM false
-                   AND st.deleted = false
+                 WHERE ${specimenFilter}
+                 AND stdl.status IS DISTINCT FROM false                  
                    AND st.status IS DISTINCT FROM false
                  ORDER BY st.name ASC`,
-                [testId]
+                specimenParams
             );
             tests[i].specimenTypeList = specimens;
         }
 
-        return resp(res, '200', { ...row, labTestList: tests });
+        return resp(res, '200', {
+            ...row,
+            resolved_b2b_client_id: ownerB2bClientId,
+            labTestList: tests,
+        });
     } catch (err) { return resp(res, '500', err.message); }
 });
 
@@ -171,12 +199,14 @@ router.post('/', async (req, res) => {
         const ctx = req.user?.id ? await resolveAdminContext(req.user.id) : null;
         let wlUid = uid;
         let wlB2b = b2b_client_id || ctx?.b2b_client_id || null;
+        let wlCorporate = corporate_client_id || ctx?.corporate_client_id || null;
         let wlUserId = user_id || ctx?.user_id || null;
         let wlRoleType = role_type_id || ctx?.role_type_id || null;
+        let wlCreatedBy = ctx?.created_by_id || req.user?.id || null;
 
         if (patient_id) {
             const pat = await queryOne(
-                `SELECT uid, b2b_client_id, user_id, role_type_id FROM patient WHERE id = $1 LIMIT 1`,
+                `SELECT uid, b2b_client_id, user_id, role_type_id, created_by_id FROM patient WHERE id = $1 LIMIT 1`,
                 [patient_id]
             );
             if (pat) {
@@ -184,16 +214,23 @@ router.post('/', async (req, res) => {
                 if (!wlB2b) wlB2b = pat.b2b_client_id;
                 if (!wlUserId) wlUserId = pat.user_id;
                 if (!wlRoleType) wlRoleType = pat.role_type_id;
+                if (!wlCreatedBy) wlCreatedBy = pat.created_by_id;
             }
+        }
+
+        if (!wlB2b && wlCreatedBy) {
+            const adminCtx = await resolveAdminContext(wlCreatedBy);
+            if (adminCtx.b2b_client_id) wlB2b = adminCtx.b2b_client_id;
+            if (!wlCorporate && adminCtx.corporate_client_id) wlCorporate = adminCtx.corporate_client_id;
         }
 
         const wl = await queryOne(
             `INSERT INTO waiting_list 
                 (patient_id, b2b_client_id, uid, reason_for_test, requisition_no,
-                 corporate_client_id, employee_id, user_id, role_type_id, status, deleted, creation_timestamp)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true,false,NOW()) RETURNING *`,
+                 corporate_client_id, employee_id, created_by_id, user_id, role_type_id, status, deleted, creation_timestamp)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true,false,NOW()) RETURNING *`,
             [patient_id, wlB2b, wlUid, reason_for_test, requisition_no,
-             corporate_client_id, employee_id, wlUserId, wlRoleType]
+                wlCorporate, employee_id, wlCreatedBy, wlUserId, wlRoleType]
         );
 
         // Link lab tests

@@ -4,6 +4,7 @@ const { pool, query, queryOne } = require('../db');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 const { authMiddleware } = require('../middleware/auth');
+const { resolveAdminContext } = require('../utils/adminContext');
 const { sendLabNotificationMail, sendTestRequestEmployeeReportMail } = require('../utils/emailService');
 
 router.use(authMiddleware);
@@ -242,17 +243,8 @@ async function generateNextPatientUid(client) {
     throw new Error('Unable to generate a unique patient UID');
 }
 
-async function resolveAdminContext(userId) {
-    const admin = await queryOne(
-        `SELECT id, user_id, role_type_id FROM admin_users WHERE id = $1 AND deleted = false LIMIT 1`,
-        [userId]
-    );
-    return {
-        created_by_id: userId,
-        b2b_client_id: admin?.user_id || null,
-        user_id: admin?.user_id || userId,
-        role_type_id: admin?.role_type_id || null,
-    };
+async function resolveAdminContextForRequest(userId) {
+    return resolveAdminContext(userId);
 }
 
 async function resolveLabTestIdsForEmployee(b2bClientId, selections) {

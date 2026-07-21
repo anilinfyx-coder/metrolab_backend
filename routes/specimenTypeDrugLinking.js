@@ -10,7 +10,7 @@ const resp = (res, code, obj) => res.json({ response_code: code, obj });
 // Optional ?status=true — dropdowns hide disabled links; management lists omit it.
 router.get('/', async (req, res) => {
     try {
-        const { lab_test_id, drug_id, specimen_type_id, status } = req.query;
+        const { lab_test_id, drug_id, specimen_type_id, b2b_client_id, status } = req.query;
         let where = 'WHERE stdl.deleted = false';
         const values = [];
         let idx = 1;
@@ -19,6 +19,10 @@ router.get('/', async (req, res) => {
         if (lab_test_id) {
             where += ` AND stdl.lab_test_id = $${idx++}`;
             values.push(lab_test_id);
+        }
+        if (b2b_client_id) {
+            where += ` AND (stdl.b2b_client_id = $${idx++} OR stdl.b2b_client_id IS NULL)`;
+            values.push(b2b_client_id);
         }
         if (drug_id) {
             where += ` AND stdl.drug_id = $${idx++}`;
@@ -117,7 +121,7 @@ router.put('/:id', async (req, res) => {
         let idx = 1;
 
         if (specimen_type_id !== undefined) { fields.push(`specimen_type_id = $${idx++}`); values.push(specimen_type_id); }
-        if (status !== undefined)           { fields.push(`status = $${idx++}`);           values.push(status); }
+        if (status !== undefined) { fields.push(`status = $${idx++}`); values.push(status); }
 
         if (fields.length === 0) return resp(res, '400', 'No fields to update');
         values.push(req.params.id);

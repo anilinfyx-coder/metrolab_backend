@@ -4,6 +4,14 @@ const path = require('path');
 const PDFDocument = require('pdfkit');
 const muhammara = require('muhammara');
 const { query, queryOne } = require('../db');
+const {
+    resolveOwnerB2bClientId,
+    resolveLabTestWithDisplayOptions,
+} = require('./labTestDisplayOptions');
+
+function showFlag(labTest, flag) {
+    return !!(labTest && labTest[flag]);
+}
 
 function pad(n) {
     return String(n).padStart(2, '0');
@@ -129,6 +137,8 @@ async function loadLabTestReportBundle(reportId) {
                 p.zipcode as patient_zipcode,
                 p.b2b_client_id as patient_b2b_client_id,
                 wl.b2b_client_id as waiting_list_b2b_client_id,
+                wl.corporate_client_id as waiting_list_corporate_client_id,
+                wl.reason_for_test as waiting_list_reason_for_test,
                 l.name as lab_test_name,
                 st.name as specimen_type_name
          FROM lab_test_category_report r
@@ -142,10 +152,26 @@ async function loadLabTestReportBundle(reportId) {
     );
     if (!report) return null;
 
-    const b2bClientId =
-        report.patient_b2b_client_id ||
-        report.waiting_list_b2b_client_id ||
-        null;
+    const b2bClientId = await resolveOwnerB2bClientId({
+        b2b_client_id: report.b2b_client_id || report.patient_b2b_client_id || report.waiting_list_b2b_client_id,
+        waiting_list_id: report.waiting_list_id,
+        patient_id: report.patient_id,
+        corporate_client_id: report.corporate_client_id || report.waiting_list_corporate_client_id,
+        lab_test_id: report.lab_test_id,
+        created_by_id: report.created_by_id,
+    });
+
+    const { labTest } = await resolveLabTestWithDisplayOptions(report.lab_test_id, {
+        b2b_client_id: b2bClientId,
+        waiting_list_id: report.waiting_list_id,
+        patient_id: report.patient_id,
+        corporate_client_id: report.corporate_client_id || report.waiting_list_corporate_client_id,
+        lab_test_id: report.lab_test_id,
+        created_by_id: report.created_by_id,
+    });
+
+    report.reason_for_test = report.reason_for_test || report.waiting_list_reason_for_test || null;
+
     const b2b = b2bClientId
         ? await queryOne(
             `SELECT company_name, tagline, public_phone_no, public_fax, public_email, email,
@@ -155,6 +181,13 @@ async function loadLabTestReportBundle(reportId) {
             [b2bClientId]
         )
         : null;
+
+    const paramFilter = b2bClientId
+        ? `rp.lab_test_id = $2 AND rp.deleted = false AND (rp.b2b_client_id = $3 OR rp.b2b_client_id IS NULL)`
+        : `rp.lab_test_id = $2 AND rp.deleted = false`;
+    const paramParams = b2bClientId
+        ? [reportId, report.lab_test_id, b2bClientId]
+        : [reportId, report.lab_test_id];
 
     const { rows: parameters } = await query(
         `SELECT rp.id,
@@ -168,12 +201,12 @@ async function loadLabTestReportBundle(reportId) {
            ON v.report_request_parameters_id = rp.id
           AND v.lab_test_category_report_id = $1
           AND v.deleted = false
-         WHERE rp.lab_test_id = $2 AND rp.deleted = false
+         WHERE ${paramFilter}
          ORDER BY rp.id ASC`,
-        [reportId, report.lab_test_id]
+        paramParams
     );
 
-    return { report, b2b, parameters };
+    return { report, b2b, parameters, labTest, b2bClientId };
 }
 
 const DEFAULT_LOGO_PATH = path.join(__dirname, '..', 'assets', 'metrolab-logo.png');
@@ -231,7 +264,7 @@ function drawLabelValue(doc, x, y, label, value, labelWidth = 130) {
 }
 
 function drawReportHeader(doc, bundle) {
-    const { report, b2b } = bundle;
+    const { report, b2b, labTest } = bundle;
     const left = 40;
     const right = doc.page.width - 40;
     const contentWidth = right - left;
@@ -293,12 +326,21 @@ function drawReportHeader(doc, bundle) {
     let yL = y;
     let yR = y;
     yL = drawLabelValue(doc, left, yL, 'UID:', `#${report.uid || report.id}`);
-    yL = drawLabelValue(doc, left, yL, 'Test Performed by:', report.test_performed_by || '—');
+
+    if (showFlag(labTest, 'show_test_performed_by')) {
+        yL = drawLabelValue(doc, left, yL, 'Test Performed by:', report.test_performed_by || '—');
+    }
     yL = drawLabelValue(doc, left, yL, 'Medical Officer:', b2b?.medical_officer_name || '—');
 
-    yR = drawLabelValue(doc, mid, yR, 'Reason for Test:', report.reason_for_test || '—');
-    yR = drawLabelValue(doc, mid, yR, 'Reported Status:', report.report_status || '—');
-    yR = drawLabelValue(doc, mid, yR, 'Regulation:', report.regulation || '—');
+    if (showFlag(labTest, 'show_reason_for_test')) {
+        yR = drawLabelValue(doc, mid, yR, 'Reason for Test:', report.reason_for_test || '—');
+    }
+    if (showFlag(labTest, 'show_report_status')) {
+        yR = drawLabelValue(doc, mid, yR, 'Reported Status:', report.report_status || '—');
+    }
+    if (showFlag(labTest, 'show_regulation')) {
+        yR = drawLabelValue(doc, mid, yR, 'Regulation:', report.regulation || '—');
+    }
 
     return Math.max(yL, yR) + 14;
 }
@@ -368,10 +410,20 @@ function drawDrugsTestedSection(doc, bundle, startY) {
 }
 
 function drawMroSection(doc, bundle, startY) {
-    const { report } = bundle;
+    const { report, labTest } = bundle;
     const left = 40;
     const right = doc.page.width - 40;
     const contentWidth = right - left;
+
+    const mroFields = [
+        { flag: 'show_final_result', label: 'Final Result :', value: report.final_result },
+        { flag: 'show_test_remark', label: 'Remark :', value: report.test_remark },
+        { flag: 'show_final_result_disposition', label: 'Final Result Disposition:', value: report.final_result_disposition },
+        { flag: 'show_final_remark', label: 'Final Remark:', value: report.final_remark },
+    ].filter((f) => showFlag(labTest, f.flag));
+
+    if (mroFields.length === 0) return startY;
+
     let y = startY + 16;
 
     if (y > doc.page.height - 220) {
@@ -392,16 +444,60 @@ function drawMroSection(doc, bundle, startY) {
         );
     y += 34;
 
-    y = drawBoldInlineField(doc, left, y, 'Final Result :', report.final_result || '—', contentWidth);
-    y = drawBoldInlineField(doc, left, y, 'Remark :', report.test_remark || '—', contentWidth);
-    y = drawBoldInlineField(doc, left, y, 'Final Result Disposition:', report.final_result_disposition || '—', contentWidth);
-    y = drawBoldInlineField(doc, left, y, 'Final Remark:', report.final_remark || '—', contentWidth);
+    mroFields.forEach((f) => {
+        y = drawBoldInlineField(doc, left, y, f.label, f.value || '—', contentWidth);
+    });
 
     return y + 20;
 }
 
+function drawAdditionalDetailsSection(doc, bundle, startY) {
+    const { report, labTest } = bundle;
+    const left = 40;
+    const right = doc.page.width - 40;
+    const contentWidth = right - left;
+    const mid = left + contentWidth / 2 + 10;
+
+    const rows = [
+        { flag: 'show_test_date', label: 'Date of Test:', value: formatUsDate(report.date_of_test) },
+        { flag: 'show_fasting', label: 'Fasting:', value: report.fasting === '1' ? 'Yes' : report.fasting === '2' ? 'No' : report.fasting },
+        { flag: 'show_requisition_no', label: 'Requisition No:', value: report.requisition_no },
+        { flag: 'show_date_administered', label: 'Date Administered:', value: formatUsDate(report.date_administered) },
+        { flag: 'show_applied_to', label: 'Applied To:', value: report.applied_to_arm },
+        { flag: 'show_lot', label: 'Lot:', value: report.lot },
+        { flag: 'show_expire_date', label: 'Exp. Date:', value: formatUsDate(report.expiry_date) },
+        { flag: 'show_date_read', label: 'Date Read:', value: formatUsDate(report.date_read) },
+        { flag: 'show_mm_indurations', label: 'mm Indurations:', value: report.mm_indurations },
+        { flag: 'show_follow_up', label: 'Follow Up:', value: report.follow_up },
+        { flag: 'show_device_identifier', label: 'Device Identifier:', value: report.device_identifier },
+    ].filter((r) => showFlag(labTest, r.flag));
+
+    if (rows.length === 0) return startY;
+
+    let y = startY + 8;
+    if (y > doc.page.height - 180) {
+        doc.addPage();
+        y = 40;
+    }
+
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#1a5f9e').text('Additional Details', left, y);
+    y += 18;
+
+    let yL = y;
+    let yR = y;
+    rows.forEach((row, index) => {
+        if (index % 2 === 0) {
+            yL = drawLabelValue(doc, left, yL, row.label, row.value || '—', 130);
+        } else {
+            yR = drawLabelValue(doc, mid, yR, row.label, row.value || '—', 130);
+        }
+    });
+
+    return Math.max(yL, yR) + 12;
+}
+
 function drawReportFooter(doc, bundle, startY) {
-    const { report, b2b } = bundle;
+    const { report, b2b, labTest } = bundle;
     const left = 40;
     const right = doc.page.width - 40;
     const contentWidth = right - left;
@@ -417,7 +513,9 @@ function drawReportFooter(doc, bundle, startY) {
 
     const colW = contentWidth / 3;
     const officerName = b2b?.medical_officer_name || '—';
-    const reportDate = formatUsDateShort(report.reported_timestamp || new Date());
+    const reportDate = (showFlag(labTest, 'show_reported_date') || showFlag(labTest, 'show_reported_time'))
+        ? formatUsDateShort(report.reported_timestamp || new Date())
+        : formatUsDateShort(new Date());
     const sigPath = resolveUploadedImagePath(b2b?.medical_officer_signature_file_name);
 
     const valueY = y;
@@ -455,7 +553,7 @@ function drawReportFooter(doc, bundle, startY) {
 function generatePlainLabTestReportPdf(bundle) {
     return new Promise((resolve, reject) => {
         try {
-            const { report, b2b, parameters } = bundle;
+            const { report, labTest } = bundle;
             const doc = new PDFDocument({ margin: 40, size: 'LETTER' });
             const chunks = [];
             doc.on('data', (c) => chunks.push(c));
@@ -466,29 +564,48 @@ function generatePlainLabTestReportPdf(bundle) {
             const left = 40;
             const right = pageWidth - 40;
             const contentWidth = right - left;
+            const mid = left + contentWidth / 2 + 10;
 
             let y = drawReportHeader(doc, bundle);
 
-            doc.moveTo(left, y).lineTo(right, y).strokeColor('#ccc').lineWidth(0.5).stroke();
-            y += 16;
+            const showSpecimen = showFlag(labTest, 'show_specimen');
+            const showCollected = showFlag(labTest, 'show_collected_date') || showFlag(labTest, 'show_collected_time');
+            const showReceived = showFlag(labTest, 'show_received_date') || showFlag(labTest, 'show_received_time');
+            const showReported = showFlag(labTest, 'show_reported_date') || showFlag(labTest, 'show_reported_time');
 
-            const mid = left + contentWidth / 2 + 10;
-            let yL = y;
-            let yR = y;
-            yL = drawLabelValue(doc, left, yL, 'Service and Specimen Type:', report.specimen_type_name || '—', 150);
-            yL = drawLabelValue(doc, left, yL, 'Received Date/Time:', formatUsDateTime(report.received_timestamp), 150);
-            yR = drawLabelValue(doc, mid, yR, 'Collection Date/Time:', formatUsDateTime(report.collected_timestamp), 140);
-            yR = drawLabelValue(doc, mid, yR, 'Reported Date/Time:', formatUsDateTime(report.reported_timestamp), 140);
-            y = Math.max(yL, yR) + 12;
+            if (showSpecimen || showCollected || showReceived || showReported) {
+                doc.moveTo(left, y).lineTo(right, y).strokeColor('#ccc').lineWidth(0.5).stroke();
+                y += 16;
 
-            doc.moveTo(left, y).lineTo(right, y).strokeColor('#ccc').lineWidth(0.5).stroke();
-            y += 16;
+                let yL = y;
+                let yR = y;
+
+                if (showSpecimen) {
+                    yL = drawLabelValue(doc, left, yL, 'Service and Specimen Type:', report.specimen_type_name || '—', 150);
+                }
+                if (showReceived) {
+                    yL = drawLabelValue(doc, left, yL, 'Received Date/Time:', formatUsDateTime(report.received_timestamp), 150);
+                }
+                if (showCollected) {
+                    yR = drawLabelValue(doc, mid, yR, 'Collection Date/Time:', formatUsDateTime(report.collected_timestamp), 140);
+                }
+                if (showReported) {
+                    yR = drawLabelValue(doc, mid, yR, 'Reported Date/Time:', formatUsDateTime(report.reported_timestamp), 140);
+                }
+                y = Math.max(yL, yR) + 12;
+
+                doc.moveTo(left, y).lineTo(right, y).strokeColor('#ccc').lineWidth(0.5).stroke();
+                y += 16;
+            } else {
+                doc.moveTo(left, y).lineTo(right, y).strokeColor('#ccc').lineWidth(0.5).stroke();
+                y += 16;
+            }
 
             // Patient demographics
             doc.font('Helvetica-Bold').fontSize(10).fillColor('#1a5f9e').text('Patient/Donor', left, y);
             y += 20;
-            yL = y;
-            yR = y;
+            let yL = y;
+            let yR = y;
             yL = drawLabelValue(doc, left, yL, 'Name:', report.patient_name || '—');
             yL = drawLabelValue(doc, left, yL, 'Date Of Birth:', formatUsDate(report.patient_dob));
             yL = drawLabelValue(doc, left, yL, 'Phone No:', report.patient_mobile || '—');
@@ -506,6 +623,7 @@ function generatePlainLabTestReportPdf(bundle) {
             yR = drawLabelValue(doc, mid, yR, 'Gender:', genderLabel(report.patient_gender));
             y = Math.max(yL, yR) + 18;
 
+            y = drawAdditionalDetailsSection(doc, bundle, y);
             y = drawDrugsTestedSection(doc, bundle, y);
             y = drawMroSection(doc, bundle, y);
             drawReportFooter(doc, bundle, y);

@@ -1,12 +1,19 @@
 const express = require('express');
 const router = express.Router();
 const { query, queryOne } = require('../db');
+const { resolveOwnerB2bClientId } = require('../utils/labTestDisplayOptions');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
+
+async function ensureReportOwnerColumns() {
+    await query(`ALTER TABLE lab_test_category_report ADD COLUMN IF NOT EXISTS b2b_client_id INT`);
+    await query(`ALTER TABLE lab_test_category_report ADD COLUMN IF NOT EXISTS corporate_client_id INT`);
+}
 
 // POST /api/LabTestReport
 router.post('/', async (req, res) => {
     try {
+        await ensureReportOwnerColumns();
         const {
             waiting_list_id, lab_test_id, b2b_client_id,
             collectedDate, collectedTime, receivedDate, receivedTime,
@@ -20,17 +27,30 @@ router.post('/', async (req, res) => {
             questions, parameters
         } = req.body;
 
-        // Get patient_id from waiting_list
-        const wl = await queryOne(`SELECT patient_id FROM waiting_list WHERE id = $1`, [waiting_list_id]);
+        // Get patient + owner context from waiting_list
+        const wl = await queryOne(
+            `SELECT patient_id, b2b_client_id, corporate_client_id
+             FROM waiting_list WHERE id = $1`,
+            [waiting_list_id]
+        );
         if (!wl) return resp(res, '404', 'Waiting list not found');
+
+        const resolvedB2bId = await resolveOwnerB2bClientId({
+            b2b_client_id: b2b_client_id || wl.b2b_client_id,
+            waiting_list_id,
+            patient_id: wl.patient_id,
+            corporate_client_id: wl.corporate_client_id,
+            lab_test_id,
+        });
+        const resolvedCorporateId = wl.corporate_client_id || null;
 
         // ==== WALLET DEDUCTION LOGIC ====
         let testPrice = 0;
         let b2bClient = null;
         let newBalance = 0;
-        if (b2b_client_id) {
-            b2bClient = await queryOne('SELECT wallet_balance, is_fixed_price, fixed_price_amount FROM b2b_clients WHERE id = $1', [b2b_client_id]);
-            
+        if (resolvedB2bId) {
+            b2bClient = await queryOne('SELECT wallet_balance, is_fixed_price, fixed_price_amount FROM b2b_clients WHERE id = $1', [resolvedB2bId]);
+
             // 1. Check for Active Subscription
             const activeSub = await queryOne(
                 `SELECT id FROM b2b_client_subscription 
@@ -38,8 +58,8 @@ router.post('/', async (req, res) => {
                  AND deleted = false 
                  AND start_date <= CURRENT_DATE 
                  AND end_date >= CURRENT_DATE 
-                 LIMIT 1`, 
-                 [b2b_client_id]
+                 LIMIT 1`,
+                [resolvedB2bId]
             );
 
             if (activeSub) {
@@ -51,8 +71,8 @@ router.post('/', async (req, res) => {
             } else {
                 // 3. Check for Test-Wise custom price
                 const customPriceRow = await queryOne(
-                    `SELECT custom_price FROM b2b_client_custom_prices WHERE b2b_client_id = $1 AND lab_test_id = $2 LIMIT 1`, 
-                    [b2b_client_id, lab_test_id]
+                    `SELECT custom_price FROM b2b_client_custom_prices WHERE b2b_client_id = $1 AND lab_test_id = $2 LIMIT 1`,
+                    [resolvedB2bId, lab_test_id]
                 );
 
                 if (customPriceRow) {
@@ -64,6 +84,7 @@ router.post('/', async (req, res) => {
             }
 
             if (testPrice > 0) {
+                b2bClient = await queryOne('SELECT wallet_balance FROM b2b_clients WHERE id = $1', [resolvedB2bId]);
                 const currentBalance = parseFloat(b2bClient?.wallet_balance || 0);
 
                 if (currentBalance < testPrice) {
@@ -101,6 +122,7 @@ router.post('/', async (req, res) => {
         const report = await queryOne(
             `INSERT INTO lab_test_category_report (
                 uid, patient_id, lab_test_id, waiting_list_id,
+                b2b_client_id, corporate_client_id,
                 collected_timestamp, received_timestamp, reported_timestamp,
                 regulation, specimen_type_id, date_of_test,
                 test_performed_by, report_status, fasting, requisition_no,
@@ -111,17 +133,19 @@ router.post('/', async (req, res) => {
                 applied_to_arm, status, deleted, creation_timestamp
             ) VALUES (
                 $1, $2, $3, $4,
-                $5, $6, $7,
-                $8, $9, $10,
-                $11, $12, $13, $14,
-                $15, $16, $17, $18, $19,
-                $20, $21, $22, $23,
-                $24, $25,
-                $26, $27, $28,
-                $29, false, false, NOW()
+                $5, $6,
+                $7, $8, $9,
+                $10, $11, $12,
+                $13, $14, $15, $16,
+                $17, $18, $19, $20, $21,
+                $22, $23, $24, $25,
+                $26, $27,
+                $28, $29, $30,
+                $31, false, false, NOW()
             ) RETURNING *`,
             [
                 reportUid, wl.patient_id, lab_test_id, waiting_list_id,
+                resolvedB2bId, resolvedCorporateId,
                 colTimestamp, recTimestamp, repTimestamp,
                 regulation, specimenTypeId || null, dateOfTest || null,
                 testPerformedBy, reportStatus, fasting, requisitionNo,
@@ -164,12 +188,12 @@ router.post('/', async (req, res) => {
         }
 
         // ==== COMPLETE WALLET TRANSACTION ====
-        if (b2b_client_id && testPrice > 0) {
-            await query('UPDATE b2b_clients SET wallet_balance = $1 WHERE id = $2', [newBalance, b2b_client_id]);
+        if (resolvedB2bId && testPrice > 0) {
+            await query('UPDATE b2b_clients SET wallet_balance = $1 WHERE id = $2', [newBalance, resolvedB2bId]);
             await query(`
                 INSERT INTO b2b_wallet_transactions (b2b_client_id, transaction_type, amount, closing_balance, description, reference_id)
                 VALUES ($1, 'DEBIT', $2, $3, $4, $5)
-            `, [b2b_client_id, testPrice, newBalance, 'Test Report Deduction', report.id]);
+            `, [resolvedB2bId, testPrice, newBalance, 'Test Report Deduction', report.id]);
         }
         // =====================================
 
