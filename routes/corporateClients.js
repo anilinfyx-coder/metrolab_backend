@@ -7,6 +7,7 @@ const { JWT_SECRET } = require('../middleware/auth');
 const { crudRoutes } = require('./crud');
 const { sendWelcomeCorporateMail } = require('../utils/emailService');
 const { validateLoginUser } = require('../utils/loginAuth');
+const { validateUniqueLoginEmail, normalizeLoginEmail } = require('../utils/emailUniqueness');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
@@ -46,6 +47,9 @@ router.post('/', async (req, res) => {
             password, verification_status
         } = req.body;
 
+        const emailCheck = await validateUniqueLoginEmail(email);
+        if (!emailCheck.ok) return resp(res, emailCheck.code, emailCheck.message);
+
         const hashedPassword = password ? await bcrypt.hash(password, 10) : '';
 
         const row = await queryOne(
@@ -56,7 +60,7 @@ router.post('/', async (req, res) => {
             ) VALUES (
                 $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,true,false
             ) RETURNING *`,
-            [role_id || 3, b2b_client_id, company_name, contact_person_name, mobile, email,
+            [role_id || 3, b2b_client_id, company_name, contact_person_name, mobile, normalizeLoginEmail(email),
              address, country_id, state_id, city_id, district_id, region_id, pincode,
              hashedPassword, verification_status || false]
         );
@@ -82,6 +86,15 @@ router.put('/:id', async (req, res) => {
     try {
         const id = req.params.id;
         const body = req.body;
+
+        if (Object.prototype.hasOwnProperty.call(body, 'email') && body.email !== undefined) {
+            const emailCheck = await validateUniqueLoginEmail(body.email, {
+                table: 'corporate_clients',
+                id,
+            });
+            if (!emailCheck.ok) return resp(res, emailCheck.code, emailCheck.message);
+            body.email = normalizeLoginEmail(body.email);
+        }
         
         let updates = [];
         let values = [];

@@ -240,6 +240,36 @@ const sendCertificateMail = async (to, patientName, certType, pdfBuffer, pdfFile
     }], lab);
 };
 
+const sendPasswordResetMail = async (to, displayName, resetUrl, lab = null) => {
+    const branding = buildEmailBranding(lab);
+    const subject = `Reset Your Password - ${branding.companyName}`;
+    const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+            ${branding.headerHtml}
+            <h2 style="color: #2c3e50; text-align: center; margin-top: 0;">Reset Your Password</h2>
+            <p>Dear ${displayName || 'User'},</p>
+            <p>We received a request to reset the password for your <strong>${branding.companyName}</strong> account.</p>
+            <p>Click the button below to choose a new password. This link will expire in <strong>1 hour</strong>.</p>
+            <div style="text-align: center; margin: 28px 0;">
+                <a href="${resetUrl}" target="_blank" rel="noopener noreferrer" style="display: inline-block; background-color: #0076A3; color: #ffffff; padding: 12px 28px; text-decoration: none; border-radius: 6px; font-weight: bold;">
+                    Reset Password
+                </a>
+            </div>
+            <p style="font-size: 13px; color: #666; word-break: break-all; line-height: 1.5;">
+                If the button does not open the page (common with Gmail on localhost), copy and paste this link into your browser:<br/>
+                <a href="${resetUrl}" style="color: #0076A3;">${resetUrl}</a>
+            </p>
+            <div style="background-color: #fff8e6; padding: 15px; border-radius: 5px; margin: 20px 0; border: 1px solid #f0e0b2;">
+                <p style="margin: 0; color: #8a6d1d;"><strong>Security tip:</strong></p>
+                <p style="margin: 8px 0 0 0; font-size: 13px; color: #666;">If you did not request a password reset, you can safely ignore this email. Your password will remain unchanged.</p>
+            </div>
+            <p>Best Regards,</p>
+            ${branding.signatureHtml}
+        </div>
+    `;
+    return sendMail(to, subject, html, [], lab);
+};
+
 module.exports = {
     sendMail,
     sendWelcomeCorporateMail,
@@ -250,4 +280,5 @@ module.exports = {
     sendTestRequestEmployeeReportMail,
     sendLabTestCategoryReportMail,
     sendCertificateMail,
+    sendPasswordResetMail,
 };

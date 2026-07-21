@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const { query, queryOne } = require('../db');
 const { JWT_SECRET } = require('../middleware/auth');
 const { validateLoginUser } = require('../utils/loginAuth');
+const { validateUniqueLoginEmail, normalizeLoginEmail } = require('../utils/emailUniqueness');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
@@ -105,11 +106,15 @@ router.post('/', async (req, res) => {
     try {
         const { name, email, mobile, password, role_id, role_type_id, uid, image_file, user_id } = req.body;
         if (!password) return resp(res, '400', 'Password is required');
+
+        const emailCheck = await validateUniqueLoginEmail(email);
+        if (!emailCheck.ok) return resp(res, emailCheck.code, emailCheck.message);
+
         const hashed = await bcrypt.hash(password, 10);
         const user = await queryOne(
             `INSERT INTO admin_users (name, email, mobile, password, role_id, role_type_id, uid, image_file, user_id, status, deleted)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true,false) RETURNING id, name, email, mobile, role_id, role_type_id, uid, image_file, user_id, status, deleted`,
-            [name, email, mobile, hashed, role_id, role_type_id, uid, image_file, user_id]
+            [name, normalizeLoginEmail(email), mobile, hashed, role_id, role_type_id, uid, image_file, user_id]
         );
         return resp(res, '200', user);
     } catch (err) {
@@ -121,6 +126,15 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
     try {
         const { name, email, mobile, password, role_id, role_type_id, uid, image_file, status } = req.body;
+
+        if (email !== undefined && email !== null) {
+            const emailCheck = await validateUniqueLoginEmail(email, {
+                table: 'admin_users',
+                id: req.params.id,
+            });
+            if (!emailCheck.ok) return resp(res, emailCheck.code, emailCheck.message);
+        }
+
         let hashed = undefined;
         if (password) hashed = await bcrypt.hash(password, 10);
 
@@ -137,7 +151,7 @@ router.put('/:id', async (req, res) => {
                 status = COALESCE($9, status)
              WHERE id = $10
              RETURNING id, name, email, mobile, role_id, role_type_id, uid, image_file, user_id, status, deleted`,
-            [name, email, mobile, hashed, role_id, role_type_id, uid, image_file, status, req.params.id]
+            [name, email != null ? normalizeLoginEmail(email) : email, mobile, hashed, role_id, role_type_id, uid, image_file, status, req.params.id]
         );
         return resp(res, '200', user);
     } catch (err) {
