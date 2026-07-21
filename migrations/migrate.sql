@@ -45,3 +45,18 @@ ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS city_id INT;
 CREATE INDEX IF NOT EXISTS idx_b2b_clients_country_id ON b2b_clients(country_id);
 CREATE INDEX IF NOT EXISTS idx_b2b_clients_state_id ON b2b_clients(state_id);
 CREATE INDEX IF NOT EXISTS idx_b2b_clients_city_id ON b2b_clients(city_id);
+
+-- ── Password reset tokens ────────────────────────────────────
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(255) NOT NULL,
+    account_table VARCHAR(50) NOT NULL,
+    account_id INT NOT NULL,
+    token_hash VARCHAR(128) NOT NULL UNIQUE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    used_at TIMESTAMPTZ,
+    creation_timestamp TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_email ON password_reset_tokens(email);
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_hash ON password_reset_tokens(token_hash);

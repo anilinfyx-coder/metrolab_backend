@@ -6,6 +6,7 @@ const multer = require('multer');
 const { query, queryOne } = require('../db');
 const { JWT_SECRET, authMiddleware } = require('../middleware/auth');
 const { sendWelcomeB2BMail, sendWalletRechargeMail } = require('../utils/emailService');
+const { validateUniqueLoginEmail, normalizeLoginEmail } = require('../utils/emailUniqueness');
 const { validateLoginUser } = require('../utils/loginAuth');
 const { uploadBuffer, getSignedUrl, generateFileName } = require('../utils/gcs');
 
@@ -243,6 +244,9 @@ router.post('/', uploadFields, async (req, res) => {
             user_id, role_type_id, is_fixed_price, fixed_price_amount
         } = body;
 
+        const emailCheck = await validateUniqueLoginEmail(email);
+        if (!emailCheck.ok) return resp(res, emailCheck.code, emailCheck.message);
+
         const row = await queryOne(
             `INSERT INTO b2b_clients (
                 role_id, company_name, contact_person_name, mobile, public_phone_no,
@@ -259,7 +263,7 @@ router.post('/', uploadFields, async (req, res) => {
                 $37,$38,true,false,$39,$40
             ) RETURNING *`,
             [role_id, company_name, contact_person_name, mobile, public_phone_no,
-                email, public_email, public_fax, address, country_id, state_id, city_id,
+                normalizeLoginEmail(email), public_email, public_fax, address, country_id, state_id, city_id,
                 district_id, region_id, pincode, support_mobile, support_email, support_person_name,
                 password, tagline, logo_file, report_header_file, report_footer_file,
                 primary_color_code, website, medical_officer_name, mrocc, clia_number,
@@ -305,6 +309,15 @@ router.put('/:id', uploadFields, async (req, res) => {
         if (uploaded.report_header_file) body.report_header_file = uploaded.report_header_file;
         if (uploaded.report_footer_file) body.report_footer_file = uploaded.report_footer_file;
         if (uploaded.medical_officer_signature_file) body.medical_officer_signature_file_name = uploaded.medical_officer_signature_file;
+
+        if (Object.prototype.hasOwnProperty.call(body, 'email') && body.email !== undefined) {
+            const emailCheck = await validateUniqueLoginEmail(body.email, {
+                table: 'b2b_clients',
+                id: req.params.id,
+            });
+            if (!emailCheck.ok) return resp(res, emailCheck.code, emailCheck.message);
+            body.email = normalizeLoginEmail(body.email);
+        }
 
         const fields = [
             'company_name', 'contact_person_name', 'mobile', 'email', 'address', 'pincode',

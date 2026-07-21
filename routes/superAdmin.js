@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const { query, queryOne } = require('../db');
 const { JWT_SECRET, authMiddleware } = require('../middleware/auth');
 const { validateLoginUser, isMainSuperAdmin } = require('../utils/loginAuth');
+const { validateUniqueLoginEmail, normalizeLoginEmail } = require('../utils/emailUniqueness');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
@@ -161,11 +162,15 @@ router.get('/:id', async (req, res) => {
 router.post('/', async (req, res) => {
     try {
         const { name, email, mobile, password, role_id, role_type_id, uid, image_file, user_id } = req.body;
+
+        const emailCheck = await validateUniqueLoginEmail(email);
+        if (!emailCheck.ok) return resp(res, emailCheck.code, emailCheck.message);
+
         const hashed = await bcrypt.hash(password, 10);
         const user = await queryOne(
             `INSERT INTO super_admin (name, email, mobile, password, role_id, role_type_id, uid, image_file, user_id, status, deleted, creation_timestamp)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,true,false,NOW()) RETURNING *`,
-            [name, email, mobile, hashed, role_id, role_type_id, uid, image_file, user_id]
+            [name, normalizeLoginEmail(email), mobile, hashed, role_id, role_type_id, uid, image_file, user_id]
         );
         return resp(res, '200', user);
     } catch (err) {
@@ -187,8 +192,17 @@ router.put('/:id', async (req, res) => {
         }
 
         const { name, email, mobile, password, role_id, status } = req.body;
+
+        if (email !== undefined && email !== null) {
+            const emailCheck = await validateUniqueLoginEmail(email, {
+                table: 'super_admin',
+                id: req.params.id,
+            });
+            if (!emailCheck.ok) return resp(res, emailCheck.code, emailCheck.message);
+        }
+
         let setClause = 'name = COALESCE($1, name), email = COALESCE($2, email), mobile = COALESCE($3, mobile), role_id = COALESCE($4, role_id), status = COALESCE($5, status)';
-        const values = [name, email, mobile, role_id, status];
+        const values = [name, email != null ? normalizeLoginEmail(email) : email, mobile, role_id, status];
         let index = 6;
         if (password) {
             setClause += `, password = $${index++}`;
