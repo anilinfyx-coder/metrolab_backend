@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const { query, queryOne } = require('../db');
+const { authMiddleware } = require('../middleware/auth');
+const { resolveAdminContext } = require('../utils/adminContext');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
@@ -65,6 +67,43 @@ router.get('/', async (req, res) => {
             }
         }
         const { rows } = await query(`SELECT * FROM lab_tests ${whereClause} ORDER BY id DESC LIMIT 1000`);
+        return resp(res, '200', rows);
+    } catch (err) { return resp(res, '500', err.message); }
+});
+
+// ── GET /api/LabTests/assigned — lab tests assigned to logged-in admin's B2B client
+router.get('/assigned', authMiddleware, async (req, res) => {
+    try {
+        await ensureLabTestCommercialColumns();
+        const ctx = await resolveAdminContext(req.user?.id);
+        if (!ctx.b2b_client_id) {
+            return resp(res, '200', []);
+        }
+
+        let whereClause = `
+            WHERE a.b2b_client_id = $1
+              AND a.deleted = false
+              AND lt.deleted = false
+        `;
+        const params = [ctx.b2b_client_id];
+
+        if (req.query.status !== undefined && String(req.query.status).trim() !== '') {
+            const raw = String(req.query.status).trim().toLowerCase();
+            if (raw === 'true' || raw === '1' || raw === 'active') {
+                whereClause += ' AND a.status IS DISTINCT FROM false AND lt.status IS DISTINCT FROM false';
+            } else if (raw === 'false' || raw === '0' || raw === 'inactive') {
+                whereClause += ' AND a.status = false';
+            }
+        }
+
+        const { rows } = await query(
+            `SELECT lt.id, lt.name, lt.description, lt.status, lt.default_view
+             FROM b2b_client_lab_test_access a
+             INNER JOIN lab_tests lt ON lt.id = a.lab_test_id
+             ${whereClause}
+             ORDER BY lt.name ASC`,
+            params
+        );
         return resp(res, '200', rows);
     } catch (err) { return resp(res, '500', err.message); }
 });
