@@ -130,13 +130,17 @@ router.get('/alerts', async (req, res) => {
                     subAlert = {
                         client,
                         type: 'subscription_expiring',
-                        message: `Your subscription expires in ${diffDays} day(s) on ${endDate.toISOString().split('T')[0]}. Please renew soon.`
+                        message: b2b_client_id 
+                            ? `Your subscription expires in ${diffDays} day(s) on ${endDate.toISOString().split('T')[0]}. Please renew soon.`
+                            : `Client ${client.company_name}'s subscription expires in ${diffDays} day(s) on ${endDate.toISOString().split('T')[0]}.`
                     };
                 } else {
                     subAlert = {
                         client,
                         type: 'subscription_expired',
-                        message: `Your subscription expired on ${endDate.toISOString().split('T')[0]}. Please renew or add wallet balance.`
+                        message: b2b_client_id
+                            ? `Your subscription expired on ${endDate.toISOString().split('T')[0]}. Please renew or add wallet balance.`
+                            : `Client ${client.company_name}'s subscription expired on ${endDate.toISOString().split('T')[0]}.`
                     };
                 }
             }
@@ -152,7 +156,9 @@ router.get('/alerts', async (req, res) => {
                     alerts.push({
                         client,
                         type: 'wallet_empty',
-                        message: `Your wallet balance is $${balance}. Please add funds to continue booking tests.`
+                        message: b2b_client_id
+                            ? `Your wallet balance is $${balance}. Please add funds to continue booking tests.`
+                            : `Client ${client.company_name}'s wallet balance is $${balance}.`
                     });
                 }
             }

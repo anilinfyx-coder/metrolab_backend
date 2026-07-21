@@ -40,18 +40,21 @@ router.use(authMiddleware);
 
 router.get('/dashboardStats', async (req, res) => {
     try {
-        const staff = await queryOne(`SELECT COUNT(*) as count FROM super_admin WHERE deleted = false`);
-        const b2b = await queryOne(`SELECT COUNT(*) as count FROM b2b_clients WHERE deleted = false`);
-        const corporate = await queryOne(`SELECT COUNT(*) as count FROM corporate_clients WHERE deleted = false`);
-        const labs = await queryOne(`SELECT COUNT(*) as count FROM lab_tests WHERE deleted = false`);
-        const patients = await queryOne(`SELECT COUNT(*) as count FROM patient WHERE deleted = false`);
+        const stats = await queryOne(`
+            SELECT 
+                (SELECT COUNT(*) FROM super_admin WHERE deleted = false) as staff,
+                (SELECT COUNT(*) FROM b2b_clients WHERE deleted = false) as b2b,
+                (SELECT COUNT(*) FROM corporate_clients WHERE deleted = false) as corporate,
+                (SELECT COUNT(*) FROM lab_tests WHERE deleted = false) as labs,
+                (SELECT COUNT(*) FROM patient WHERE deleted = false) as patients
+        `);
         
         return resp(res, '200', {
-            total_staff: parseInt(staff.count, 10),
-            total_b2b_clients: parseInt(b2b.count, 10),
-            total_corporate_clients: parseInt(corporate.count, 10),
-            total_lab_tests: parseInt(labs.count, 10),
-            total_patients: parseInt(patients.count, 10)
+            total_staff: parseInt(stats.staff, 10),
+            total_b2b_clients: parseInt(stats.b2b, 10),
+            total_corporate_clients: parseInt(stats.corporate, 10),
+            total_lab_tests: parseInt(stats.labs, 10),
+            total_patients: parseInt(stats.patients, 10)
         });
     } catch (err) {
         console.error(err);
