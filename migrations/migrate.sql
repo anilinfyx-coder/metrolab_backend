@@ -1,0 +1,47 @@
+-- ============================================================
+-- Metrolab incremental migrations (safe / idempotent)
+-- Runs automatically on backend server start
+-- ============================================================
+
+-- ── Wallet ───────────────────────────────────────────────────
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS wallet_balance DECIMAL(12, 2) DEFAULT 0.00;
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS is_fixed_price BOOLEAN DEFAULT FALSE;
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS fixed_price_amount DECIMAL(12, 2) DEFAULT 0.00;
+
+CREATE TABLE IF NOT EXISTS b2b_wallet_transactions (
+    id SERIAL PRIMARY KEY,
+    b2b_client_id INT REFERENCES b2b_clients(id),
+    transaction_type VARCHAR(20) NOT NULL,
+    amount DECIMAL(12, 2) NOT NULL,
+    closing_balance DECIMAL(12, 2) NOT NULL,
+    description TEXT,
+    reference_id INT,
+    creation_timestamp TIMESTAMPTZ DEFAULT NOW(),
+    created_by_id INT
+);
+
+-- ── Global settings ──────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS global_settings (
+    id SERIAL PRIMARY KEY,
+    setting_key VARCHAR(100) UNIQUE NOT NULL,
+    setting_value TEXT,
+    description TEXT,
+    creation_timestamp TIMESTAMPTZ DEFAULT NOW(),
+    updated_timestamp TIMESTAMPTZ DEFAULT NOW()
+);
+
+INSERT INTO global_settings (setting_key, setting_value, description)
+VALUES
+    ('drug_test_price', '15.00', 'Price for Drug Test'),
+    ('alcohol_test_price', '20.00', 'Price for Alcohol Test'),
+    ('alternate_test_price', '10.00', 'Price for Alternate Test')
+ON CONFLICT (setting_key) DO NOTHING;
+
+-- ── B2B client location (country / state / city) ─────────────
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS country_id INT;
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS state_id INT;
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS city_id INT;
+
+CREATE INDEX IF NOT EXISTS idx_b2b_clients_country_id ON b2b_clients(country_id);
+CREATE INDEX IF NOT EXISTS idx_b2b_clients_state_id ON b2b_clients(state_id);
+CREATE INDEX IF NOT EXISTS idx_b2b_clients_city_id ON b2b_clients(city_id);

@@ -1,118 +1,113 @@
 const nodemailer = require('nodemailer');
-const path = require('path');
-const fs = require('fs');
 require('dotenv').config();
+const { buildEmailBranding } = require('./emailBranding');
 
-const LOGO_CID = 'metrolab-logo';
-const LOGO_PATH = path.join(__dirname, '..', 'assets', 'metrolab-logo.png');
+function getFrontendBaseUrl() {
+    const raw = process.env.FRONTEND_URL || process.env.APP_URL || process.env.CLIENT_URL || 'http://localhost:3000';
+    return String(raw).trim().replace(/\/+$/, '');
+}
+
+function getLoginUrl() {
+    return `${getFrontendBaseUrl()}/`;
+}
+
+function buildLoginLinkBlock(portalLabel = 'Portal') {
+    const loginUrl = getLoginUrl();
+    return `
+            <div style="text-align: center; margin: 24px 0;">
+                <a href="${loginUrl}" style="display: inline-block; background-color: #0076A3; color: #ffffff; padding: 12px 28px; text-decoration: none; border-radius: 6px; font-weight: bold;">
+                    Log In to ${portalLabel}
+                </a>
+            </div>`;
+}
 
 const transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST || 'smtp.gmail.com',
     port: process.env.SMTP_PORT || 587,
-    secure: process.env.SMTP_PORT == 465, // true for 465, false for other ports
+    secure: process.env.SMTP_PORT == 465,
     auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS,
     },
 });
 
-const getLogoAttachment = () => {
-    if (!fs.existsSync(LOGO_PATH)) return null;
-    return {
-        filename: 'metrolab-logo.png',
-        path: LOGO_PATH,
-        cid: LOGO_CID,
-    };
-};
-
-const getEmailHeader = () => {
-    if (getLogoAttachment()) {
-        return `
-    <div style="text-align: center; margin-bottom: 20px;">
-        <img src="cid:${LOGO_CID}" alt="Metrolab Logo" style="max-width: 200px; height: auto;" />
-    </div>
-`;
-    }
-
-    return `
-    <div style="text-align: center; margin-bottom: 20px;">
-        <strong style="font-size: 24px; color: #0076A3;">Metrolab</strong>
-    </div>
-`;
-};
-
-const sendMail = async (to, subject, htmlContent, attachments = []) => {
+const sendMail = async (to, subject, htmlContent, attachments = [], lab = null) => {
     try {
-        const logoAttachment = getLogoAttachment();
-        const allAttachments = logoAttachment ? [logoAttachment, ...attachments] : attachments;
+        const branding = buildEmailBranding(lab);
+        const allAttachments = branding.logoAttachment
+            ? [branding.logoAttachment, ...attachments]
+            : attachments;
 
         const info = await transporter.sendMail({
-            from: `"${process.env.SMTP_FROM_NAME || 'Metrolab'}" <${process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER}>`,
+            from: `"${process.env.SMTP_FROM_NAME || branding.companyName}" <${process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER}>`,
             to,
             subject,
             html: htmlContent,
             attachments: allAttachments,
         });
-        console.log("Message sent: %s", info.messageId);
+        console.log('Message sent: %s', info.messageId);
         return true;
     } catch (error) {
-        console.error("Error sending email: ", error);
+        console.error('Error sending email: ', error);
         return false;
     }
 };
 
-const sendWelcomeB2BMail = async (to, companyName, password) => {
-    const subject = "Welcome to Metrolab - Your Portal Credentials";
+const sendWelcomeB2BMail = async (to, companyName, password, lab = null) => {
+    const branding = buildEmailBranding(lab);
+    const subject = `Welcome to ${branding.companyName} - Your Portal Credentials`;
     const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
-            ${getEmailHeader()}
-            <h2 style="color: #2c3e50; text-align: center; margin-top: 0;">Welcome to Metrolab</h2>
+            ${branding.headerHtml}
+            <h2 style="color: #2c3e50; text-align: center; margin-top: 0;">Welcome to ${branding.companyName}</h2>
             <p>Dear ${companyName},</p>
-            <p>Your Lab account has been successfully created. You can now log in to the Metrolab B2B Portal to manage your operations.</p>
+            <p>Your Lab account has been successfully created. You can now log in to the B2B Portal to manage your operations.</p>
+            ${buildLoginLinkBlock('B2B Portal')}
             <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin: 20px 0;">
-                <p style="margin: 0;"><strong>Login URL:</strong> <a href="/login">Metrolab B2B Portal</a></p>
-                <p style="margin: 10px 0 0 0;"><strong>Username / Email:</strong> ${to}</p>
+                <p style="margin: 0;"><strong>Username / Email:</strong> ${to}</p>
                 <p style="margin: 10px 0 0 0;"><strong>Password:</strong> ${password}</p>
             </div>
             <p style="color: #e74c3c;"><em>Please change your password after logging in for the first time.</em></p>
             <br/>
             <p>Best Regards,</p>
-            <p><strong>The Metrolab Team</strong></p>
+            ${branding.signatureHtml}
         </div>
     `;
-    return sendMail(to, subject, html);
+    return sendMail(to, subject, html, [], lab);
 };
 
-const sendWelcomeCorporateMail = async (to, companyName, password) => {
-    const subject = "Welcome to Metrolab - Your Corporate Portal Credentials";
+const sendWelcomeCorporateMail = async (to, companyName, password, lab = null) => {
+    const branding = buildEmailBranding(lab);
+    const subject = `Welcome to ${branding.companyName} - Your Corporate Portal Credentials`;
     const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
-            ${getEmailHeader()}
-            <h2 style="color: #2c3e50; text-align: center; margin-top: 0;">Welcome to Metrolab</h2>
+            ${branding.headerHtml}
+            <h2 style="color: #2c3e50; text-align: center; margin-top: 0;">Welcome to ${branding.companyName}</h2>
             <p>Dear ${companyName},</p>
-            <p>Your Corporate account has been successfully created. You can now log in to the Metrolab Corporate Portal to request tests and view reports.</p>
+            <p>Your Corporate account has been successfully created. You can now log in to the Corporate Portal to request tests and view reports.</p>
+            ${buildLoginLinkBlock('Corporate Portal')}
             <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin: 20px 0;">
-                <p style="margin: 0;"><strong>Login URL:</strong> <a href="[Your_Corporate_Portal_URL]">Metrolab Corporate Portal</a></p>
-                <p style="margin: 10px 0 0 0;"><strong>Username / Email:</strong> ${to}</p>
+                <p style="margin: 0;"><strong>Username / Email:</strong> ${to}</p>
                 <p style="margin: 10px 0 0 0;"><strong>Password:</strong> ${password}</p>
             </div>
             <p style="color: #e74c3c;"><em>Please change your password after logging in for the first time.</em></p>
             <br/>
             <p>Best Regards,</p>
-            <p><strong>The Metrolab Team</strong></p>
+            ${branding.signatureHtml}
         </div>
     `;
-    return sendMail(to, subject, html);
+    return sendMail(to, subject, html, [], lab);
 };
 
-const sendSubscriptionPurchaseMail = async (to, amount, startDate, endDate) => {
-    const subject = "Subscription Confirmation - Metrolab";
+const sendSubscriptionPurchaseMail = async (to, companyName, amount, startDate, endDate, lab = null) => {
+    const branding = buildEmailBranding(lab);
+    const subject = `Subscription Confirmation - ${branding.companyName}`;
     const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
-            ${getEmailHeader()}
+            ${branding.headerHtml}
             <h2 style="color: #27ae60; text-align: center; margin-top: 0;">Subscription Confirmed</h2>
-            <p>Hello,</p>
-            <p>Thank you for your purchase. Your subscription to Metrolab has been successfully updated.</p>
+            <p>Dear ${companyName || branding.companyName},</p>
+            <p>Thank you for your purchase. Your subscription with <strong>${branding.companyName}</strong> has been successfully activated.</p>
             <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin: 20px 0;">
                 <p style="margin: 0;"><strong>Amount Paid:</strong> $${amount}</p>
                 <p style="margin: 10px 0 0 0;"><strong>Valid From:</strong> ${new Date(startDate).toLocaleDateString()}</p>
@@ -121,19 +116,43 @@ const sendSubscriptionPurchaseMail = async (to, amount, startDate, endDate) => {
             <p>We appreciate your business.</p>
             <br/>
             <p>Best Regards,</p>
-            <p><strong>The Metrolab Team</strong></p>
+            ${branding.signatureHtml}
         </div>
     `;
-    return sendMail(to, subject, html);
+    return sendMail(to, subject, html, [], lab);
 };
 
-const sendLabNotificationMail = async (to, labName, corporateName, title, count) => {
-    const subject = "New Test Request Received";
+const sendWalletRechargeMail = async (to, companyName, amount, newBalance, description, lab = null) => {
+    const branding = buildEmailBranding(lab);
+    const subject = `Wallet Funds Added - ${branding.companyName}`;
     const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
-            ${getEmailHeader()}
+            ${branding.headerHtml}
+            <h2 style="color: #27ae60; text-align: center; margin-top: 0;">Wallet Recharged Successfully</h2>
+            <p>Dear ${companyName || branding.companyName},</p>
+            <p>Funds have been added to your wallet with <strong>${branding.companyName}</strong>.</p>
+            <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin: 20px 0;">
+                <p style="margin: 0;"><strong>Amount Added:</strong> $${amount}</p>
+                <p style="margin: 10px 0 0 0;"><strong>New Balance:</strong> $${newBalance}</p>
+                ${description ? `<p style="margin: 10px 0 0 0;"><strong>Description:</strong> ${description}</p>` : ''}
+            </div>
+            <p>You can use your wallet balance to book lab tests.</p>
+            <br/>
+            <p>Best Regards,</p>
+            ${branding.signatureHtml}
+        </div>
+    `;
+    return sendMail(to, subject, html, [], lab);
+};
+
+const sendLabNotificationMail = async (to, labName, corporateName, title, count, lab = null) => {
+    const branding = buildEmailBranding(lab);
+    const subject = `New Test Request Received - ${branding.companyName}`;
+    const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
+            ${branding.headerHtml}
             <h2 style="color: #2980b9; text-align: center; margin-top: 0;">New Test Request Notification</h2>
-            <p>Dear ${labName},</p>
+            <p>Dear ${labName || branding.companyName},</p>
             <p>You have received a new test request (Random Selection / Bulk Request) from a corporate client.</p>
             <div style="background-color: #f9f9f9; padding: 15px; border-radius: 5px; margin: 20px 0;">
                 <p style="margin: 0;"><strong>Corporate Client:</strong> ${corporateName || 'N/A'}</p>
@@ -143,34 +162,36 @@ const sendLabNotificationMail = async (to, labName, corporateName, title, count)
             <p>Please log in to your B2B Portal to view the full details and process the request.</p>
             <br/>
             <p>Best Regards,</p>
-            <p><strong>The Metrolab Team</strong></p>
+            ${branding.signatureHtml}
         </div>
     `;
-    return sendMail(to, subject, html);
+    return sendMail(to, subject, html, [], lab);
 };
 
-const sendTestRequestEmployeeReportMail = async (to, employeeName, testTitle, pdfBuffer, pdfFilename) => {
+const sendTestRequestEmployeeReportMail = async (to, employeeName, testTitle, pdfBuffer, pdfFilename, lab = null) => {
+    const branding = buildEmailBranding(lab);
     const subject = `Test Report: ${testTitle} - ${employeeName}`;
     const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
-            ${getEmailHeader()}
+            ${branding.headerHtml}
             <h2 style="color: #2980b9; text-align: center; margin-top: 0;">Test Report Ready</h2>
             <p>Dear ${employeeName},</p>
             <p>Your test report for the request <strong>${testTitle}</strong> is attached to this email.</p>
             <p>Please find the PDF document attached.</p>
             <br/>
             <p>Best Regards,</p>
-            <p><strong>The Metrolab Team</strong></p>
+            ${branding.signatureHtml}
         </div>
     `;
-    return sendMail(to, subject, html, [{ filename: pdfFilename, content: pdfBuffer }]);
+    return sendMail(to, subject, html, [{ filename: pdfFilename, content: pdfBuffer }], lab);
 };
 
-const sendLabTestCategoryReportMail = async (to, patientName, testName, reportUid, pdfBuffer, pdfFilename) => {
+const sendLabTestCategoryReportMail = async (to, patientName, testName, reportUid, pdfBuffer, pdfFilename, lab = null) => {
+    const branding = buildEmailBranding(lab);
     const subject = `Lab Test Report: ${testName || 'Report'} (${reportUid || ''})`;
     const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
-            ${getEmailHeader()}
+            ${branding.headerHtml}
             <h2 style="color: #2980b9; text-align: center; margin-top: 0;">Your Lab Test Report</h2>
             <p>Dear ${patientName || 'Patient'},</p>
             <p>Please find your lab test report attached to this email.</p>
@@ -184,21 +205,22 @@ const sendLabTestCategoryReportMail = async (to, patientName, testName, reportUi
                 <p style="margin: 8px 0 0 0; font-size: 13px; color: #666;">Format: <strong>MMDD</strong> (Month + Day), for example if DOB is 9/9/2003, password is <strong>0909</strong>.</p>
             </div>
             <p>Best Regards,</p>
-            <p><strong>The Metrolab Team</strong></p>
+            ${branding.signatureHtml}
         </div>
     `;
     return sendMail(to, subject, html, [{
         filename: pdfFilename,
         content: pdfBuffer,
         contentType: 'application/pdf',
-    }]);
+    }], lab);
 };
 
-const sendCertificateMail = async (to, patientName, certType, pdfBuffer, pdfFilename) => {
+const sendCertificateMail = async (to, patientName, certType, pdfBuffer, pdfFilename, lab = null) => {
+    const branding = buildEmailBranding(lab);
     const subject = `Your ${certType}`;
     const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; padding: 20px; border: 1px solid #ddd; border-radius: 10px;">
-            ${getEmailHeader()}
+            ${branding.headerHtml}
             <h2 style="color: #2980b9; text-align: center; margin-top: 0;">Your Certificate</h2>
             <p>Dear ${patientName || 'Patient'},</p>
             <p>Please find your <strong>${certType}</strong> attached to this email.</p>
@@ -208,23 +230,24 @@ const sendCertificateMail = async (to, patientName, certType, pdfBuffer, pdfFile
                 <p style="margin: 8px 0 0 0; font-size: 13px; color: #666;">Format: <strong>MMDD</strong> (Month + Day), for example if DOB is 9/9/2003, password is <strong>0909</strong>.</p>
             </div>
             <p>Best Regards,</p>
-            <p><strong>The Metrolab Team</strong></p>
+            ${branding.signatureHtml}
         </div>
     `;
     return sendMail(to, subject, html, [{
         filename: pdfFilename,
         content: pdfBuffer,
-        contentType: 'application/pdf'
-    }]);
+        contentType: 'application/pdf',
+    }], lab);
 };
 
 module.exports = {
     sendMail,
     sendWelcomeCorporateMail,
     sendSubscriptionPurchaseMail,
+    sendWalletRechargeMail,
     sendWelcomeB2BMail,
     sendLabNotificationMail,
     sendTestRequestEmployeeReportMail,
     sendLabTestCategoryReportMail,
-    sendCertificateMail
+    sendCertificateMail,
 };

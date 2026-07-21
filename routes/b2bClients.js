@@ -5,7 +5,7 @@ const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const { query, queryOne } = require('../db');
 const { JWT_SECRET, authMiddleware } = require('../middleware/auth');
-const { sendWelcomeB2BMail } = require('../utils/emailService');
+const { sendWelcomeB2BMail, sendWalletRechargeMail } = require('../utils/emailService');
 const { validateLoginUser } = require('../utils/loginAuth');
 const { uploadBuffer, getSignedUrl, generateFileName } = require('../utils/gcs');
 
@@ -269,7 +269,7 @@ router.post('/', uploadFields, async (req, res) => {
         );
 
         if (row && row.email) {
-            sendWelcomeB2BMail(row.email, row.company_name, password).catch(err => console.error('B2B Email error:', err));
+            sendWelcomeB2BMail(row.email, row.company_name, password, row).catch(err => console.error('B2B Email error:', err));
         }
 
         return resp(res, '200', row);
@@ -281,10 +281,12 @@ router.get('/:id', async (req, res) => {
     try {
         const row = await queryOne(
             `SELECT id, role_id, company_name, contact_person_name, mobile, public_phone_no,
-                    email, public_email, public_fax, address, support_mobile, support_email,
-                    support_person_name, tagline, logo_file, primary_color_code, website,
-                    smtp_server, smtp_port, smtp_email, smtp_password, status, deleted,
-                    wallet_balance, is_fixed_price, fixed_price_amount
+                    email, public_email, public_fax, address, country_id, state_id, city_id,
+                    support_mobile, support_email, support_person_name, tagline, logo_file,
+                    primary_color_code, website, smtp_server, smtp_port, smtp_email, smtp_password,
+                    status, deleted, wallet_balance, is_fixed_price, fixed_price_amount,
+                    pincode, medical_officer_name, medical_officer_position, mrocc, clia_number,
+                    is_approval, approval_note
              FROM b2b_clients WHERE id = $1 LIMIT 1`,
             [req.params.id]
         );
@@ -306,6 +308,7 @@ router.put('/:id', uploadFields, async (req, res) => {
 
         const fields = [
             'company_name', 'contact_person_name', 'mobile', 'email', 'address', 'pincode',
+            'country_id', 'state_id', 'city_id',
             'public_phone_no', 'public_email', 'public_fax',
             'support_person_name', 'support_mobile', 'support_email',
             'tagline', 'primary_color_code', 'website',
@@ -321,8 +324,12 @@ router.put('/:id', uploadFields, async (req, res) => {
 
         for (const key of fields) {
             if (Object.prototype.hasOwnProperty.call(body, key) && body[key] !== undefined) {
+                let value = body[key];
+                if (['country_id', 'state_id', 'city_id'].includes(key) && (value === '' || value === 'null')) {
+                    value = null;
+                }
                 updates.push(`${key} = $${idx++}`);
-                values.push(body[key]);
+                values.push(value);
             }
         }
 
@@ -341,9 +348,9 @@ router.put('/:id', uploadFields, async (req, res) => {
             `UPDATE b2b_clients SET ${updates.join(', ')}
              WHERE id = $${idx}
              RETURNING id, role_id, company_name, contact_person_name, mobile, public_phone_no,
-                       email, public_email, public_fax, address, support_mobile, support_email,
-                       support_person_name, tagline, primary_color_code, website,
-                       smtp_server, smtp_port, smtp_email, smtp_password, status, deleted,
+                       email, public_email, public_fax, address, country_id, state_id, city_id,
+                       support_mobile, support_email, support_person_name, tagline, primary_color_code,
+                       website, smtp_server, smtp_port, smtp_email, smtp_password, status, deleted,
                        is_fixed_price, fixed_price_amount`,
             values
         );
@@ -372,7 +379,11 @@ router.post('/rechargeWallet', authMiddleware, async (req, res) => {
         }
 
         // We must lock the row or just do an atomic update
-        const client = await queryOne(`SELECT wallet_balance FROM b2b_clients WHERE id = $1`, [b2b_client_id]);
+        const client = await queryOne(
+            `SELECT wallet_balance, company_name, email, tagline, logo_file, report_header_file
+             FROM b2b_clients WHERE id = $1`,
+            [b2b_client_id]
+        );
         if (!client) return resp(res, '404', 'B2B Client not found');
 
         const newBalance = parseFloat(client.wallet_balance || 0) + parseFloat(amount);
@@ -383,6 +394,17 @@ router.post('/rechargeWallet', authMiddleware, async (req, res) => {
             INSERT INTO b2b_wallet_transactions (b2b_client_id, transaction_type, amount, closing_balance, description, created_by_id)
             VALUES ($1, 'CREDIT', $2, $3, $4, $5)
         `, [b2b_client_id, amount, newBalance, description || 'Manual Recharge', req.user ? req.user.id : null]);
+
+        if (client.email) {
+            sendWalletRechargeMail(
+                client.email,
+                client.company_name,
+                amount,
+                newBalance.toFixed(2),
+                description || 'Manual Recharge',
+                client
+            ).catch(err => console.error('Wallet recharge email error:', err));
+        }
 
         return resp(res, '200', { message: 'Wallet recharged successfully', newBalance });
     } catch (err) {

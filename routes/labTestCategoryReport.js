@@ -410,7 +410,8 @@ router.post('/emailLabTestCategoryReport', async (req, res) => {
             pdf.report.lab_test_name,
             pdf.report.uid,
             pdf.buffer,
-            pdf.filename
+            pdf.filename,
+            pdf.b2b
         );
 
         if (!ok) return resp(res, '500', 'Failed to send email via SMTP');

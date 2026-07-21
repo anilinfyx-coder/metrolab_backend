@@ -185,7 +185,8 @@ router.post('/emailPhysicalExaminationCertificate', async (req, res) => {
             pdf.cert.patient_name,
             'Physical Examination Certificate',
             pdf.buffer,
-            pdf.filename
+            pdf.filename,
+            pdf.lab
         );
 
         if (!ok) {

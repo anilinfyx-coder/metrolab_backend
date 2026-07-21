@@ -2,8 +2,31 @@ const express = require('express');
 const router = express.Router();
 const { query, queryOne } = require('../db');
 const { sendSubscriptionPurchaseMail } = require('../utils/emailService');
+const { B2B_BRANDING_SELECT } = require('../utils/emailBranding');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
+
+async function fetchLabBranding(b2bClientId) {
+    if (!b2bClientId) return null;
+    return queryOne(
+        `SELECT ${B2B_BRANDING_SELECT} FROM b2b_clients WHERE id = $1 LIMIT 1`,
+        [b2bClientId]
+    );
+}
+
+async function notifySubscriptionPurchase(b2bClientId, amount, startDate, endDate) {
+    const lab = await fetchLabBranding(b2bClientId);
+    if (!lab?.email) return;
+
+    sendSubscriptionPurchaseMail(
+        lab.email,
+        lab.company_name,
+        amount,
+        startDate,
+        endDate,
+        lab
+    ).catch(err => console.error('Subscription Email error:', err));
+}
 
 // GET /api/B2bClientSubscription?b2b_client_id=X
 router.get('/', async (req, res) => {
@@ -40,10 +63,7 @@ router.post('/', async (req, res) => {
             [b2b_client_id, start_date, end_date, amount]
         );
 
-        const b2bClient = await queryOne('SELECT email FROM b2b_clients WHERE id = $1', [b2b_client_id]);
-        if (b2bClient && b2bClient.email) {
-            sendSubscriptionPurchaseMail(b2bClient.email, amount, start_date, end_date).catch(err => console.error('Subscription Email error:', err));
-        }
+        await notifySubscriptionPurchase(b2b_client_id, amount, start_date, end_date);
 
         return resp(res, '200', row);
     } catch (err) { return resp(res, '500', err.message); }
@@ -61,6 +81,16 @@ router.put('/:id', async (req, res) => {
              WHERE id = $4 RETURNING *`,
             [start_date, end_date, amount, req.params.id]
         );
+
+        if (row) {
+            await notifySubscriptionPurchase(
+                row.b2b_client_id,
+                row.amount,
+                row.start_date,
+                row.end_date
+            );
+        }
+
         return resp(res, '200', row);
     } catch (err) { return resp(res, '500', err.message); }
 });
