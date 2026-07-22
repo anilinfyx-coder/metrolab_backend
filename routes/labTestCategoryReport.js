@@ -136,6 +136,17 @@ router.post('/getLabTestCategoryReportDetails', async (req, res) => {
         }
         report.resolved_b2b_client_id = b2bClientId;
 
+        const { resolveCertLabBranding } = require('../utils/certPdfCommon');
+        const brandingLab = await resolveCertLabBranding(req.user, b2bClientId);
+        if (brandingLab) {
+            report.b2b_company_name = brandingLab.company_name;
+            report.b2b_logo = brandingLab.logo_file;
+            report.b2b_address = brandingLab.address;
+            report.b2b_phone = brandingLab.public_phone_no;
+            report.b2b_fax = brandingLab.public_fax;
+            report.b2b_email = brandingLab.public_email || brandingLab.email;
+        }
+
         const questionFilter = b2bClientId
             ? `rq.lab_test_id = $2 AND rq.deleted = false AND (rq.b2b_client_id = $3 OR rq.b2b_client_id IS NULL)`
             : `rq.lab_test_id = $2 AND rq.deleted = false`;
@@ -389,11 +400,11 @@ router.post('/changeLabTestCategoryReportStatus', async (req, res) => {
 // POST downloadLabTestCategoryReport — formatted PDF (no password on download)
 router.post('/downloadLabTestCategoryReport', async (req, res) => {
     try {
-        const { buildLabTestReportPdf } = require('../utils/labTestReportPdf');
+        const { buildLabTestReportForDelivery } = require('../utils/labTestReportPdfDelivery');
         const { id } = req.body;
         if (!id) return res.status(400).json({ response_code: '400', obj: 'Report id is required' });
 
-        const pdf = await buildLabTestReportPdf(id, { encrypt: false });
+        const pdf = await buildLabTestReportForDelivery(id, req.user);
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename=${pdf.filename}`);
         return res.send(pdf.buffer);
@@ -409,12 +420,12 @@ router.post('/downloadLabTestCategoryReport', async (req, res) => {
 // POST emailLabTestCategoryReport — email PDF to patient (no password)
 router.post('/emailLabTestCategoryReport', async (req, res) => {
     try {
-        const { buildLabTestReportPdf } = require('../utils/labTestReportPdf');
+        const { buildLabTestReportForDelivery } = require('../utils/labTestReportPdfDelivery');
         const { sendLabTestCategoryReportMail } = require('../utils/emailService');
         const { id } = req.body;
         if (!id) return resp(res, '400', 'Report id is required');
 
-        const pdf = await buildLabTestReportPdf(id, { encrypt: false });
+        const pdf = await buildLabTestReportForDelivery(id, req.user);
         const to = (pdf.report.patient_email || '').trim();
         if (!to) return resp(res, '400', 'No email address found for this patient');
 
@@ -425,7 +436,7 @@ router.post('/emailLabTestCategoryReport', async (req, res) => {
             pdf.report.uid,
             pdf.buffer,
             pdf.filename,
-            pdf.b2b
+            pdf.lab || pdf.b2b
         );
 
         if (!ok) return resp(res, '500', 'Failed to send email via SMTP');

@@ -848,7 +848,7 @@ router.post('/transferEmployeeToWaitingList', async (req, res) => {
     }
 });
 
-const PDFDocument = require('pdfkit');
+const { buildTestRequestReportPdf } = require('../utils/testRequestReportPdf');
 
 router.post('/downloadTestRequestReport', async (req, res) => {
     try {
@@ -875,49 +875,11 @@ router.post('/downloadTestRequestReport', async (req, res) => {
             WHERE tre.test_request_id = $1
         `, [id]);
 
-        // Generate PDF
-        const doc = new PDFDocument({ margin: 50 });
-        
-        // Set response headers to force download
+        const pdf = await buildTestRequestReportPdf({ tr, employees, authUser: req.user });
+
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename=TR-${id}-Report.pdf`);
-        
-        doc.pipe(res);
-
-        // Header
-        doc.fontSize(20).text('Test Request Report', { align: 'center' });
-        doc.moveDown();
-        
-        // Info Section
-        doc.fontSize(12);
-        doc.text(`Request ID: TR-${tr.id}`);
-        doc.text(`Date: ${new Date(tr.creation_timestamp).toLocaleString()}`);
-        doc.text(`Corporate Name: ${tr.corporateClientCompany || tr.b2bClientCompany || 'N/A'}`);
-        doc.text(`Title: ${tr.title}`);
-        doc.text(`Year: ${tr.year} | Quarter: ${tr.quarter}`);
-        doc.text(`Status: ${tr.status === false ? 'Rejected' : (tr.status === true ? 'Processed' : 'Pending')}`);
-        doc.moveDown();
-
-        // Employees List
-        doc.fontSize(16).text('Assigned Employees', { underline: true });
-        doc.moveDown();
-
-        if (employees.length === 0) {
-            doc.fontSize(12).text('No employees found for this test request.', { font: 'Helvetica-Oblique' });
-        } else {
-            doc.fontSize(10);
-            employees.forEach((emp, index) => {
-                const tests = [];
-                if (emp.is_selected_for_drug) tests.push('Drug');
-                if (emp.is_selected_for_alcohol) tests.push('Alcohol');
-                if (emp.is_selected_for_alternate) tests.push('Alternate');
-                
-                doc.text(`${index + 1}. ${emp.first_name} ${emp.last_name} (${emp.department || 'No Department'}) - Tests: ${tests.length > 0 ? tests.join(', ') : 'None'}`);
-            });
-        }
-
-        // Finalize PDF
-        doc.end();
+        return res.send(pdf.buffer);
 
     } catch(err) {
         console.error(err);
@@ -953,8 +915,7 @@ router.post('/emailTestRequestReport', async (req, res) => {
         const { test_request_id, employee_id } = req.body;
         
         const trQuery = `
-            SELECT t.*, c.company_name as "corporateClientCompany", b.company_name as "b2bClientCompany",
-                   b.tagline as "b2bTagline", b.logo_file as "b2bLogoFile", b.report_header_file as "b2bReportHeaderFile"
+            SELECT t.*, c.company_name as "corporateClientCompany", b.company_name as "b2bClientCompany"
             FROM test_request t
             LEFT JOIN corporate_clients c ON t.corporate_client_id = c.id
             LEFT JOIN b2b_clients b ON t.b2b_client_id = b.id
@@ -974,58 +935,23 @@ router.post('/emailTestRequestReport', async (req, res) => {
         if (!emp) return resp(res, '404', 'Employee not found in this request');
         if (!emp.email) return resp(res, '400', 'Employee does not have an email address');
 
-        // Generate PDF into a Buffer
-        const doc = new PDFDocument({ margin: 50 });
-        const buffers = [];
-        doc.on('data', buffers.push.bind(buffers));
-        doc.on('end', async () => {
-            const pdfData = Buffer.concat(buffers);
-            const labBranding = {
-                company_name: tr.b2bClientCompany,
-                tagline: tr.b2bTagline,
-                logo_file: tr.b2bLogoFile,
-                report_header_file: tr.b2bReportHeaderFile,
-            };
-            const success = await sendTestRequestEmployeeReportMail(
-                emp.email,
-                `${emp.first_name} ${emp.last_name}`,
-                tr.title,
-                pdfData,
-                `TR-${tr.id}-${emp.first_name}-Report.pdf`,
-                labBranding
-            );
-            if (success) {
-                return resp(res, '200', 'Email sent successfully');
-            } else {
-                return resp(res, '500', 'Failed to send email via SMTP');
-            }
+        const pdf = await buildTestRequestReportPdf({
+            tr,
+            employee: emp,
+            authUser: req.user,
         });
-
-        // Header
-        doc.fontSize(20).text('Test Request Report (Employee)', { align: 'center' });
-        doc.moveDown();
-        
-        // Info Section
-        doc.fontSize(12);
-        doc.text(`Request ID: TR-${tr.id}`);
-        doc.text(`Date: ${new Date(tr.creation_timestamp).toLocaleString()}`);
-        doc.text(`Corporate Name: ${tr.corporateClientCompany || tr.b2bClientCompany || 'N/A'}`);
-        doc.text(`Title: ${tr.title}`);
-        doc.moveDown();
-
-        doc.fontSize(16).text('Employee Details', { underline: true });
-        doc.moveDown();
-        doc.fontSize(12);
-        doc.text(`Name: ${emp.first_name} ${emp.last_name}`);
-        doc.text(`Department: ${emp.department || 'N/A'}`);
-        
-        const tests = [];
-        if (emp.is_selected_for_drug) tests.push('Drug');
-        if (emp.is_selected_for_alcohol) tests.push('Alcohol');
-        if (emp.is_selected_for_alternate) tests.push('Alternate');
-        
-        doc.text(`Assigned Tests: ${tests.length > 0 ? tests.join(', ') : 'None'}`);
-        doc.end();
+        const success = await sendTestRequestEmployeeReportMail(
+            emp.email,
+            `${emp.first_name} ${emp.last_name}`,
+            tr.title,
+            pdf.buffer,
+            `TR-${tr.id}-${emp.first_name}-Report.pdf`,
+            pdf.lab
+        );
+        if (success) {
+            return resp(res, '200', 'Email sent successfully');
+        }
+        return resp(res, '500', 'Failed to send email via SMTP');
 
     } catch(err) {
         console.error(err);

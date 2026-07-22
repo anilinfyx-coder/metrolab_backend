@@ -5,20 +5,14 @@ const PDFDocument = require('pdfkit');
 const muhammara = require('muhammara');
 const { queryOne } = require('../db');
 const {
-    resolveUploadedFilePath,
-    resolveLabLogoPath,
-} = require('./uploadedFiles');
-const { PREFIX } = require('./gcs');
-
-const FALLBACK = {
-    company: 'Metro Lab & Clinic LLC',
-    addressLine: '3422 Georgia Avenue NW • Washington, D.C. 20010',
-    addressShort: '3422 Georgia Ave NW Washington DC 20010',
-    phone: '202.234.1234',
-    fax: '202.234.1339',
-    email: 'manager@metrolabdc.com',
-    website: 'www.metrolabdc.com',
-};
+    resolveCertLabBranding,
+    resolveCertLogoPath,
+    drawCertBannerHeader,
+    drawCheckbox,
+    drawCheckMark,
+    labText,
+    CHECKBOX_SIZE,
+} = require('./certPdfCommon');
 
 function pad(n) {
     return String(n).padStart(2, '0');
@@ -131,45 +125,131 @@ function sexLabel(sex) {
     return sex ? String(sex) : '';
 }
 
-function drawUnderlineField(doc, x, y, width, value) {
-    const text = value ? String(value) : '';
-    doc.moveTo(x, y + 11).lineTo(x + width, y + 11).strokeColor('#111').lineWidth(0.8).stroke();
-    if (text) {
-        doc.font('Helvetica-Bold').fontSize(9).fillColor('#111')
-            .text(text, x + 2, y, { width: width - 4, align: 'center', lineBreak: false });
-    }
+function isEvalNormal(field) {
+    const s = String(field || '').trim();
+    return s.toLowerCase() === 'normal' || s.toUpperCase() === 'N';
 }
 
-function drawCheckbox(doc, x, y, checked) {
-    doc.rect(x, y, 10, 10).lineWidth(1).strokeColor('#111').stroke();
-    if (checked) {
-        doc.font('Helvetica-Bold').fontSize(10).fillColor('#111').text('X', x + 1.5, y);
+function isEvalAbnormal(field) {
+    const s = String(field || '').trim();
+    return s.toLowerCase() === 'abnormal' || s.toUpperCase() === 'AB';
+}
+
+/** Form underline: left-aligned value, consistent baseline. */
+function drawField(doc, x, y, width, value, fontSize = 10.5) {
+    const text = value != null && String(value).trim() !== '' ? String(value) : '';
+    doc.save();
+    doc.moveTo(x, y + 14).lineTo(x + width, y + 14).strokeColor('#111').lineWidth(0.75).stroke();
+    if (text) {
+        doc.font('Helvetica-Bold').fontSize(fontSize).fillColor('#111')
+            .text(text, x + 3, y + 1, {
+                width: width - 6,
+                align: 'left',
+                lineBreak: false,
+                ellipsis: true,
+            });
     }
+    doc.restore();
+}
+
+function drawLabel(doc, text, x, y, fontSize = 10.5) {
+    doc.font('Times-Roman').fontSize(fontSize).fillColor('#111')
+        .text(text, x, y + 2, { lineBreak: false });
+}
+
+/**
+ * Draw "Label ____value____" and return x after the field (+ gap).
+ */
+function field(doc, label, value, x, y, labelW, fieldW, gapAfter = 12) {
+    drawLabel(doc, label, x, y);
+    drawField(doc, x + labelW, y, fieldW, value);
+    return x + labelW + fieldW + gapAfter;
+}
+
+const AUTH_H = 118;
+
+function drawDigitalAuthBlock(doc, { left, pageW, y, clinicianName, specialty, examDate, clinicianAddress }) {
+    const headerH = 26;
+    const noteH = 28;
+    const bodyH = AUTH_H - headerH - noteH;
+
+    doc.save();
+    doc.lineWidth(1.3).strokeColor('#1e40af');
+    doc.roundedRect(left, y, pageW, AUTH_H, 4).stroke();
+
+    doc.rect(left, y, pageW, headerH).fill('#eff6ff');
+    doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#1e40af')
+        .text('ELECTRONICALLY AUTHENTICATED CERTIFICATE', left, y + 8, {
+            width: pageW,
+            align: 'center',
+            lineBreak: false,
+        });
+
+    const padX = 16;
+    const colW = (pageW - padX * 2 - 20) / 2;
+    const leftCol = left + padX;
+    const rightCol = left + padX + colW + 20;
+    let iy = y + headerH + 12;
+
+    doc.font('Helvetica').fontSize(8).fillColor('#64748b')
+        .text('Digitally Signed By', leftCol, iy, { lineBreak: false });
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#0f172a')
+        .text(clinicianName ? String(clinicianName) : '—', leftCol, iy + 12, {
+            width: colW,
+            lineBreak: false,
+            ellipsis: true,
+        });
+    doc.font('Helvetica').fontSize(9).fillColor('#334155')
+        .text(specialty ? String(specialty) : 'MD / PA / NP', leftCol, iy + 28, {
+            width: colW,
+            lineBreak: false,
+        });
+
+    doc.font('Helvetica').fontSize(8).fillColor('#64748b')
+        .text('Date of Examination', rightCol, iy, { lineBreak: false });
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#0f172a')
+        .text(formatUsDate(examDate) || '—', rightCol, iy + 12, { lineBreak: false });
+
+    doc.font('Helvetica').fontSize(8).fillColor('#64748b')
+        .text('Clinician Address', rightCol, iy + 28, { lineBreak: false });
+    doc.font('Helvetica').fontSize(9).fillColor('#334155')
+        .text(clinicianAddress ? String(clinicianAddress) : '—', rightCol, iy + 40, {
+            width: colW,
+            height: 18,
+            lineBreak: false,
+            ellipsis: true,
+        });
+
+    const noteY = y + headerH + bodyH;
+    doc.moveTo(left, noteY).lineTo(left + pageW, noteY)
+        .strokeColor('#bfdbfe').lineWidth(0.8).stroke();
+    doc.font('Helvetica-Oblique').fontSize(8).fillColor('#64748b')
+        .text('This document is electronically authenticated. No physical signature is required.', left, noteY + 9, {
+            width: pageW,
+            align: 'center',
+            lineBreak: false,
+        });
+    doc.restore();
+    return y + AUTH_H;
 }
 
 async function buildPhysicalExamCertPdf(id, options = {}) {
     const cert = await queryOne(
-        `SELECT 
+        `SELECT
             pec.*,
-            p.name as patient_name, p.dob as patient_dob, p.gender as sex, p.mobile as tel, p.street1, p.street2,
-            p.city, p.state, p.zipcode, p.email as patient_email
-        FROM physical_examination_certificates pec
-        LEFT JOIN patient p ON pec.patient_id = p.id
-        WHERE pec.id = $1 AND pec.deleted = false`,
+            p.name as patient_name, p.dob as patient_dob, p.gender as sex, p.mobile as tel,
+            p.street1, p.street2, p.city, p.state, p.zipcode, p.email as patient_email, p.b2b_client_id
+         FROM physical_examination_certificates pec
+         LEFT JOIN patient p ON pec.patient_id = p.id
+         WHERE pec.id = $1 AND pec.deleted = false`,
         [id]
     );
 
     if (!cert) throw new Error('Certificate not found');
 
-    const lab = await resolveLoggedInLab(options.authUser);
+    const lab = await resolveLoggedInLab(options.authUser, cert.b2b_client_id);
     const logoPath = await resolveCertLogoPath(lab);
-    const hasLabLogo = Boolean(
-        await resolveUploadedFilePath(lab?.logo_file, { prefix: PREFIX.b2bClients })
-    );
-    const sigPath = await resolveUploadedFilePath(
-        lab?.medical_officer_signature_file_name,
-        { prefix: PREFIX.b2bClients }
-    );
+    const hasLabLogo = Boolean(logoPath);
 
     return new Promise((resolve, reject) => {
         try {
@@ -183,136 +263,129 @@ async function buildPhysicalExamCertPdf(id, options = {}) {
                     if (!password) {
                         return reject(new Error('Cannot encrypt: patient DOB is invalid'));
                     }
-                    const encryptedBuffer = encryptPdfBuffer(pdfBuffer, password);
                     resolve({
-                        buffer: encryptedBuffer,
+                        buffer: encryptPdfBuffer(pdfBuffer, password),
                         cert,
                         filename: `Physical_Exam_Certificate_${cert.id}.pdf`,
                         password,
                         lab,
                     });
                 } else {
-                    resolve({ buffer: pdfBuffer, cert, filename: `Physical_Exam_Certificate_${cert.id}.pdf`, lab });
+                    resolve({
+                        buffer: pdfBuffer,
+                        cert,
+                        filename: `Physical_Exam_Certificate_${cert.id}.pdf`,
+                        lab,
+                    });
                 }
             });
 
-            const left = 44;
-            const right = doc.page.width - 44;
+            const left = 48;
+            const right = doc.page.width - 48;
             const pageW = right - left;
-            let y = 28;
+            const pageBottom = doc.page.height - 42;
+            let y = 30;
 
-            const company = labOrFallback(lab?.company_name, FALLBACK.company);
-            const address = labOrFallback(lab?.address, FALLBACK.addressShort);
-            const phone = labOrFallback(lab?.public_phone_no, FALLBACK.phone);
-            const fax = labOrFallback(lab?.public_fax, FALLBACK.fax);
-            const email = labOrFallback(lab?.public_email, FALLBACK.email);
-            const website = String(labOrFallback(lab?.website, FALLBACK.website)).replace(/^https?:\/\//i, '');
-            const bannerAddress = labOrFallback(lab?.address, FALLBACK.addressLine);
+            const company = labText(lab?.company_name);
+            const address = labText(lab?.address);
+            const phone = labText(lab?.public_phone_no);
+            const fax = labText(lab?.public_fax);
+            const email = labText(lab?.public_email);
             const fullAddress = [cert.street1, cert.street2, cert.city, cert.state, cert.zipcode]
                 .filter(Boolean)
                 .join(', ');
 
-            // Watermark
-            doc.save();
-            doc.fillColor('#94a3b8', 0.08);
-            doc.font('Helvetica-Bold').fontSize(56);
-            doc.rotate(-28, { origin: [doc.page.width / 2, doc.page.height / 2] });
-            doc.text('METRO LAB', 80, doc.page.height / 2 - 18, { align: 'center', width: pageW + 40 });
-            doc.restore();
-            doc.fillColor('#111').opacity(1);
-
-            // Banner
-            if (logoPath) {
-                try {
-                    doc.image(logoPath, left, y, { fit: [78, 56] });
-                } catch (err) {
-                    console.warn('Could not embed PE certificate logo:', err.message);
-                }
+            if (company) {
+                doc.save();
+                doc.fillColor('#94a3b8', 0.06);
+                doc.font('Helvetica-Bold').fontSize(44);
+                doc.rotate(-28, { origin: [doc.page.width / 2, doc.page.height / 2] });
+                doc.text(company, 80, doc.page.height / 2 - 16, { align: 'center', width: pageW + 40 });
+                doc.restore();
+                doc.fillColor('#111').opacity(1);
             }
 
-            const brandX = left + 92;
-            if (!hasLabLogo) {
-                doc.font('Helvetica-Bold').fontSize(22).fillColor('#1e293b')
-                    .text('METRO', brandX, y + 2, { continued: true });
-                doc.fillColor('#c9a227').text(' LAB');
-            } else {
-                doc.font('Helvetica-Bold').fontSize(14).fillColor('#111')
-                    .text(company, brandX, y + 6, { width: pageW - 100 });
-            }
-            doc.font('Times-Roman').fontSize(8).fillColor('#111');
-            doc.text(bannerAddress, brandX, y + 30, { width: pageW - 100 });
-            doc.text(`Phone: ${phone} • Fax: ${fax} • ${email}`, brandX, y + 41, { width: pageW - 100 });
-            y += 64;
-
-            doc.moveTo(left, y).lineTo(right, y).strokeColor('#6c9cd4').lineWidth(2).stroke();
-            y += 3;
-            doc.moveTo(left, y).lineTo(right, y).strokeColor('#6c9cd4').lineWidth(1).stroke();
-            y += 10;
-
-            doc.font('Times-Bold').fontSize(11).fillColor('#111').text(company, left, y, { align: 'center', width: pageW });
-            y += 13;
-            doc.font('Times-Roman').fontSize(9);
-            doc.text(address, left, y, { align: 'center', width: pageW });
-            y += 11;
-            doc.text(`(Tell) ${phone} (Fax) ${fax}`, left, y, { align: 'center', width: pageW });
-            y += 11;
-            doc.text(website, left, y, { align: 'center', width: pageW });
-            y += 14;
-
-            doc.font('Times-Bold').fontSize(14).text('Physical Examination Certificate', left, y, {
-                align: 'center',
-                width: pageW,
+            y = drawCertBannerHeader(doc, {
+                left,
+                right,
+                y,
+                logoPath,
+                hasLabLogo,
+                company,
+                address,
+                phone,
+                fax,
+                email,
             });
+
+            doc.font('Times-Bold').fontSize(16).fillColor('#111')
+                .text('Physical Examination Certificate', left, y, {
+                    width: pageW,
+                    align: 'center',
+                    lineBreak: false,
+                });
+            y += 26;
+
+            // —— Patient block (uniform row height) ——
+            const rowH = 26;
+            const labelSize = 10.5;
+
+            // Name / Age / Sex
+            let x = left;
+            x = field(doc, 'Name:', cert.patient_name, x, y, 40, 248, 14);
+            x = field(doc, 'Age:', cert.age, x, y, 30, 46, 14);
+            field(doc, 'Sex:', sexLabel(cert.sex), x, y, 30, 72, 0);
+            y += rowH;
+
+            // Address / Tel
+            x = left;
+            x = field(doc, 'Address:', fullAddress, x, y, 54, 318, 14);
+            field(doc, 'Tel #:', cert.tel, x, y, 38, 98, 0);
+            y += rowH;
+
+            // Height / Weight / B.P / Pulse — equal gaps
+            const vitals = [
+                { label: 'Height:', value: cert.height, lw: 46, fw: 58 },
+                { label: 'Weight:', value: cert.weight, lw: 50, fw: 58 },
+                { label: 'B.P:', value: cert.bp, lw: 30, fw: 72 },
+                { label: 'Pulse:', value: cert.pulse, lw: 40, fw: 78 },
+            ];
+            x = left;
+            vitals.forEach((v, i) => {
+                const gap = i === vitals.length - 1 ? 0 : 16;
+                x = field(doc, v.label, v.value, x, y, v.lw, v.fw, gap);
+            });
+            y += rowH;
+
+            // Hearing / Vision
+            x = left;
+            x = field(doc, 'Hearing: Right', cert.hearing_right, x, y, 84, 72, 10);
+            x = field(doc, 'Left', cert.hearing_left, x, y, 30, 72, 18);
+            x = field(doc, 'Vision: Right', cert.vision_right, x, y, 74, 64, 10);
+            field(doc, 'Left', cert.vision_left, x, y, 30, 64, 0);
+            y += rowH;
+
+            // Wear Glasses
+            drawLabel(doc, 'Wear Glasses:', left, y, labelSize);
+            const gX = left + 90;
+            drawCheckbox(doc, gX, y + 2, !!cert.wear_glasses);
+            drawLabel(doc, 'Yes', gX + CHECKBOX_SIZE + 6, y, labelSize);
+            drawCheckbox(doc, gX + 52, y + 2, !cert.wear_glasses);
+            drawLabel(doc, 'No', gX + 52 + CHECKBOX_SIZE + 6, y, labelSize);
+            y += rowH + 4;
+
+            // —— Clinical evaluation (3-column grid) ——
+            const labelColW = pageW - 170;
+            const normalColW = 80;
+            const abnormalColW = 90;
+            const normalX = left + labelColW;
+            const abnormalX = normalX + normalColW;
+
+            doc.font('Times-Bold').fontSize(11).fillColor('#111');
+            doc.text('CLINICAL EVALUATION', left, y, { width: labelColW - 8, lineBreak: false });
+            doc.text('NORMAL', normalX, y, { width: normalColW, align: 'center', lineBreak: false });
+            doc.text('ABNORMAL', abnormalX, y, { width: abnormalColW, align: 'center', lineBreak: false });
             y += 18;
-
-            // Patient rows
-            doc.font('Times-Roman').fontSize(10);
-            doc.text('Name:', left, y + 1);
-            drawUnderlineField(doc, left + 38, y, 220, cert.patient_name);
-            doc.font('Times-Roman').fontSize(10).text('Age:', left + 275, y + 1);
-            drawUnderlineField(doc, left + 300, y, 50, cert.age);
-            doc.font('Times-Roman').fontSize(10).text('Sex:', left + 365, y + 1);
-            drawUnderlineField(doc, left + 390, y, 70, sexLabel(cert.sex));
-            y += 16;
-
-            doc.font('Times-Roman').fontSize(10).text('Address:', left, y + 1);
-            drawUnderlineField(doc, left + 50, y, 300, fullAddress);
-            doc.font('Times-Roman').fontSize(10).text('Tel #:', left + 365, y + 1);
-            drawUnderlineField(doc, left + 398, y, 62, cert.tel);
-            y += 16;
-
-            doc.font('Times-Roman').fontSize(10).text('Height:', left, y + 1);
-            drawUnderlineField(doc, left + 42, y, 55, cert.height);
-            doc.font('Times-Roman').fontSize(10).text('Weight:', left + 110, y + 1);
-            drawUnderlineField(doc, left + 155, y, 55, cert.weight);
-            doc.font('Times-Roman').fontSize(10).text('B.P:', left + 225, y + 1);
-            drawUnderlineField(doc, left + 250, y, 70, cert.bp);
-            doc.font('Times-Roman').fontSize(10).text('Pulse:', left + 335, y + 1);
-            drawUnderlineField(doc, left + 370, y, 90, cert.pulse);
-            y += 16;
-
-            doc.font('Times-Roman').fontSize(10).text('Hearing: Right', left, y + 1);
-            drawUnderlineField(doc, left + 85, y, 50, cert.hearing_right);
-            doc.font('Times-Roman').fontSize(10).text('Left', left + 145, y + 1);
-            drawUnderlineField(doc, left + 170, y, 50, cert.hearing_left);
-            doc.font('Times-Roman').fontSize(10).text('Vision: Right', left + 235, y + 1);
-            drawUnderlineField(doc, left + 310, y, 45, cert.vision_right);
-            doc.font('Times-Roman').fontSize(10).text('Left', left + 365, y + 1);
-            drawUnderlineField(doc, left + 390, y, 45, cert.vision_left);
-            y += 16;
-
-            doc.font('Times-Roman').fontSize(10).text('Wear Glasses:', left, y + 1);
-            drawCheckbox(doc, left + 90, y + 1, !!cert.wear_glasses);
-            doc.font('Times-Roman').fontSize(10).text('Yes', left + 106, y + 1);
-            drawCheckbox(doc, left + 145, y + 1, !cert.wear_glasses);
-            doc.font('Times-Roman').fontSize(10).text('No', left + 161, y + 1);
-            y += 18;
-
-            // Clinical evaluation
-            doc.font('Times-Bold').fontSize(10).text('CLINICAL EVALUATION', left, y);
-            doc.text('NORMAL', left + 250, y);
-            doc.text('ABNORMAL', left + 330, y);
-            y += 14;
 
             const items = [
                 { id: '1.', label: 'Head & Neck', field: cert.eval_head },
@@ -329,68 +402,69 @@ async function buildPhysicalExamCertPdf(id, options = {}) {
                 { id: '12.', label: 'Neurologic', field: cert.eval_neurologic },
             ];
 
-            doc.font('Times-Roman').fontSize(10);
+            // Fill remaining page so auth sits near bottom without a huge empty band mid-page.
+            const afterEvalFixed = 12 + 16 + 20 + 22 + 14 + AUTH_H; // comments + overall + gaps + auth
+            const spaceForRows = Math.max(items.length * 16, pageBottom - y - afterEvalFixed);
+            const evalRowH = Math.min(20, Math.max(16, spaceForRows / items.length));
+            const markSize = 12;
+
             items.forEach((item) => {
-                doc.text(item.id, left, y);
-                doc.text(item.label, left + 28, y);
-                const isNormal = String(item.field || '').toLowerCase() === 'normal'
-                    || String(item.field || '').toUpperCase() === 'N';
-                const isAbnormal = String(item.field || '').toLowerCase() === 'abnormal'
-                    || String(item.field || '').toUpperCase() === 'AB';
-                if (isNormal) doc.font('Helvetica-Bold').text('X', left + 265, y);
-                if (isAbnormal) doc.font('Helvetica-Bold').text('X', left + 355, y);
-                doc.font('Times-Roman');
-                y += 13;
+                doc.font('Times-Roman').fontSize(11).fillColor('#111');
+                doc.text(item.id, left, y + 1, { width: 28, lineBreak: false });
+                doc.text(item.label, left + 30, y + 1, { width: labelColW - 40, lineBreak: false });
+
+                if (isEvalNormal(item.field)) {
+                    drawCheckMark(doc, normalX + (normalColW - markSize) / 2, y + 1, markSize);
+                }
+                if (isEvalAbnormal(item.field)) {
+                    drawCheckMark(doc, abnormalX + (abnormalColW - markSize) / 2, y + 1, markSize);
+                }
+                y += evalRowH;
             });
 
-            y += 6;
-            doc.font('Times-Roman').fontSize(10).text('13.', left, y);
-            doc.text('Additional Comment, Past medical history, current medications:', left + 28, y);
-            y += 14;
-            doc.moveTo(left + 28, y + 11).lineTo(right, y + 11).strokeColor('#111').lineWidth(0.8).stroke();
-            if (cert.additional_comments) {
-                doc.font('Helvetica').fontSize(9).text(String(cert.additional_comments), left + 32, y, {
-                    width: pageW - 36,
-                    height: 12,
-                    lineBreak: false,
-                });
-            }
-            y += 20;
+            y += 10;
 
-            doc.font('Times-Roman').fontSize(10).text('14.', left, y);
-            doc.text('Overall Physical Condition', left + 28, y);
-            drawCheckbox(doc, left + 200, y, cert.overall_condition === 'Fit');
-            doc.text('Fit', left + 216, y);
-            drawCheckbox(doc, left + 260, y, cert.overall_condition === 'Unfit');
-            doc.text('Unfit', left + 276, y);
-            y += 20;
-
-            // Signature
-            doc.font('Times-Roman').fontSize(10).text('Name/ Signature of examining Clinician:', left, y + 1);
-            const sigX = left + 210;
-            const sigW = 200;
-            if (sigPath) {
-                try {
-                    doc.image(sigPath, sigX + 40, y - 14, { fit: [110, 28] });
-                } catch (_) { /* ignore */ }
-            }
-            drawUnderlineField(doc, sigX, y, sigW, cert.clinician_name);
-            doc.font('Times-Roman').fontSize(10).text(
-                cert.clinician_specialty || 'MD/PA/NP',
-                sigX + sigW + 6,
-                y + 1
-            );
+            // 13. Additional comments — label, then value on the next line (tight)
+            doc.font('Times-Roman').fontSize(11).fillColor('#111');
+            doc.text('13.', left, y, { width: 28, lineBreak: false });
+            doc.text('Additional Comment, Past medical history, current medications:', left + 30, y, {
+                width: pageW - 30,
+                lineBreak: false,
+            });
             y += 16;
+            drawField(doc, left + 30, y, pageW - 30, cert.additional_comments, 10);
+            y += 24;
 
-            doc.font('Times-Roman').fontSize(10).text('Date of examination:', left, y + 1);
-            drawUnderlineField(doc, left + 118, y, 130, formatUsDate(cert.date_of_examination));
-            y += 16;
+            // 14. Overall condition
+            doc.font('Times-Roman').fontSize(11).fillColor('#111');
+            doc.text('14.', left, y, { width: 28, lineBreak: false });
+            doc.text('Overall Physical Condition', left + 30, y, { lineBreak: false });
+            const oX = left + 220;
+            drawCheckbox(doc, oX, y + 1, cert.overall_condition === 'Fit');
+            doc.text('Fit', oX + CHECKBOX_SIZE + 6, y, { lineBreak: false });
+            drawCheckbox(doc, oX + 56, y + 1, cert.overall_condition === 'Unfit');
+            doc.text('Unfit', oX + 56 + CHECKBOX_SIZE + 6, y, { lineBreak: false });
+            y += 24;
 
-            doc.font('Times-Roman').fontSize(10).text('Address:', left, y + 1);
-            drawUnderlineField(doc, left + 50, y, pageW - 50, cert.clinician_address);
+            // Auth footer — just below content; nudge down only if a little leftover room
+            let authY = y + 10;
+            const leftover = pageBottom - AUTH_H - authY;
+            if (leftover > 8 && leftover < 36) {
+                authY += leftover;
+            }
+            if (authY + AUTH_H > pageBottom) {
+                authY = pageBottom - AUTH_H;
+            }
 
-            doc.font('Times-Bold').fontSize(10)
-                .text(website, left, doc.page.height - 36, { align: 'center', width: pageW });
+            drawDigitalAuthBlock(doc, {
+                left,
+                pageW,
+                y: authY,
+                clinicianName: cert.clinician_name,
+                specialty: cert.clinician_specialty,
+                examDate: cert.date_of_examination,
+                clinicianAddress: cert.clinician_address,
+            });
 
             doc.end();
         } catch (e) {
