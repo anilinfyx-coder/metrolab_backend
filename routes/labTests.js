@@ -55,22 +55,61 @@ async function ensureLabTestCommercialColumns() {
 
 // ── GET /api/LabTests ─────────────────────────────────────────
 // Optional ?status=true|false — dropdowns use status=true; management lists omit it.
+// Optional ?search= — filters name/description (ILIKE).
+// Optional ?assign_for_b2b_client_id= — orders assigned tests for that B2B client first.
 router.get('/', async (req, res) => {
     try {
         await ensureLabTestCommercialColumns();
-        let whereClause = 'WHERE deleted = false';
+        const params = [];
+        let whereClause = 'WHERE lt.deleted = false';
+
         if (req.query.status !== undefined && String(req.query.status).trim() !== '') {
             const raw = String(req.query.status).trim().toLowerCase();
             if (raw === 'true' || raw === '1' || raw === 'active') {
-                whereClause += ' AND status IS DISTINCT FROM false';
+                whereClause += ' AND lt.status IS DISTINCT FROM false';
             } else if (raw === 'false' || raw === '0' || raw === 'inactive') {
-                whereClause += ' AND status = false';
+                whereClause += ' AND lt.status = false';
             }
         }
+
+        const search = String(req.query.search || req.query.q || '').trim();
+        if (search) {
+            params.push(`%${search}%`);
+            whereClause += ` AND (lt.name ILIKE $${params.length} OR COALESCE(lt.description, '') ILIKE $${params.length})`;
+        }
+
+        const assignFor = req.query.assign_for_b2b_client_id != null
+            && String(req.query.assign_for_b2b_client_id).trim() !== ''
+            ? Number(req.query.assign_for_b2b_client_id)
+            : null;
+
+        if (assignFor && Number.isFinite(assignFor)) {
+            const b2bId = Math.trunc(assignFor);
+            return await respondListQuery(req, res, resp, {
+                dataSql: `SELECT lt.*
+                          FROM lab_tests lt
+                          LEFT JOIN b2b_client_lab_test_access a
+                            ON a.lab_test_id = lt.id
+                           AND a.b2b_client_id = ${b2bId}
+                           AND a.deleted = false
+                          ${whereClause}`,
+                countSql: `SELECT COUNT(*)::int AS total
+                           FROM lab_tests lt
+                           ${whereClause}`,
+                params,
+                orderBy: `ORDER BY CASE WHEN a.id IS NULL THEN 1 ELSE 0 END,
+                                  a.creation_timestamp DESC NULLS LAST,
+                                  lt.name ASC`,
+                legacyLimit: 1000,
+                defaultLimit: 25,
+            });
+        }
+
         return await respondListQuery(req, res, resp, {
-            dataSql: `SELECT * FROM lab_tests ${whereClause}`,
-            countSql: `SELECT COUNT(*)::int AS total FROM lab_tests ${whereClause}`,
-            orderBy: 'ORDER BY id DESC',
+            dataSql: `SELECT lt.* FROM lab_tests lt ${whereClause}`,
+            countSql: `SELECT COUNT(*)::int AS total FROM lab_tests lt ${whereClause}`,
+            params,
+            orderBy: 'ORDER BY lt.id DESC',
             legacyLimit: 1000,
             defaultLimit: 10,
         });
