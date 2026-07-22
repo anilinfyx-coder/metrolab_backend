@@ -45,6 +45,36 @@ router.get('/', async (req, res) => {
     } catch (err) { return resp(res, '500', err.message); }
 });
 
+// GET /api/B2bClientSubscription/active — currently active subscriptions (for dashboard)
+router.get('/active', async (req, res) => {
+    try {
+        const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 10, 1), 50);
+        const { rows } = await query(
+            `SELECT s.id,
+                    s.b2b_client_id,
+                    s.start_date,
+                    s.end_date,
+                    s.amount,
+                    s.creation_timestamp,
+                    s.status,
+                    b.company_name,
+                    b.contact_person_name,
+                    b.email,
+                    b.mobile
+             FROM b2b_client_subscription s
+             INNER JOIN b2b_clients b ON b.id = s.b2b_client_id AND b.deleted = false
+             WHERE s.deleted = false
+               AND s.status IS DISTINCT FROM false
+               AND s.start_date <= CURRENT_DATE
+               AND s.end_date >= CURRENT_DATE
+             ORDER BY s.end_date ASC, s.id DESC
+             LIMIT $1`,
+            [limit]
+        );
+        return resp(res, '200', rows);
+    } catch (err) { return resp(res, '500', err.message); }
+});
+
 // GET /api/B2bClientSubscription/:id
 router.get('/:id', async (req, res) => {
     try {

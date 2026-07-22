@@ -7,6 +7,8 @@ const {
     loadB2bLabTestAccess,
     resolveOwnerB2bClientId,
 } = require('../utils/labTestDisplayOptions');
+const { respondListQuery } = require('../utils/pagination');
+const { buildEffectiveParamsCte } = require('../utils/reportRequestParameters');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
@@ -45,8 +47,8 @@ router.get('/', async (req, res) => {
             }
         }
 
-        const { rows } = await query(
-            `SELECT r.*,
+        const dataSql = `
+             SELECT r.*,
                     p.name as patient_name,
                     p.email as patient_email,
                     p.uid as patient_uid,
@@ -55,11 +57,22 @@ router.get('/', async (req, res) => {
              FROM lab_test_category_report r
              LEFT JOIN patient p ON p.id = r.patient_id
              LEFT JOIN lab_tests l ON l.id = r.lab_test_id
-             ${whereClause}
-             ORDER BY r.id DESC`,
-            values
-        );
-        return resp(res, '200', rows);
+             ${whereClause}`;
+
+        const countSql = `
+             SELECT COUNT(*)::int AS total
+             FROM lab_test_category_report r
+             LEFT JOIN patient p ON p.id = r.patient_id
+             LEFT JOIN lab_tests l ON l.id = r.lab_test_id
+             ${whereClause}`;
+
+        return await respondListQuery(req, res, resp, {
+            dataSql,
+            countSql,
+            params: values,
+            orderBy: 'ORDER BY r.id DESC',
+            defaultLimit: 25,
+        });
     } catch (err) {
         return resp(res, '500', err.message);
     }
@@ -172,35 +185,66 @@ router.post('/getLabTestCategoryReportDetails', async (req, res) => {
         const { rows: questions } = await query(questionsQuery, questionParams);
         report.testReportQuestionList = questions;
 
-        const paramFilter = b2bClientId
-            ? `rp.lab_test_id = $2 AND rp.deleted = false AND (rp.b2b_client_id = $3 OR rp.b2b_client_id IS NULL)`
-            : `rp.lab_test_id = $2 AND rp.deleted = false`;
-        const paramParams = b2bClientId ? [id, report.lab_test_id, b2bClientId] : [id, report.lab_test_id];
-        const parametersQuery = `
-            SELECT
-                rp.id as report_request_parameters_id,
-                rp.name,
-                rp.label,
-                rp.description,
-                rp.placeholder,
-                rp.input_type,
-                rp.input_option,
-                rp.unit_text,
-                rp.screening_cutoff,
-                rp.confirmation_cutoff,
-                rp.is_mandatory,
-                a.id as answer_id,
-                COALESCE(a.value, '') as value
-            FROM report_request_parameters rp
-            LEFT JOIN lab_test_category_report_request_parameter_value a
-                ON a.report_request_parameters_id = rp.id
-               AND a.lab_test_category_report_id = $1
-               AND a.deleted = false                          
-            WHERE ${paramFilter}
-                AND rp.status IS DISTINCT FROM false
-            ORDER BY rp.id ASC
-        `;
-        const { rows: parameters } = await query(parametersQuery, paramParams);
+        let parameters;
+        if (b2bClientId) {
+            const { sql: effectiveCte, values: effectiveValues } = buildEffectiveParamsCte(
+                b2bClientId,
+                report.lab_test_id,
+                2,
+            );
+            const parametersQuery = `
+                WITH ${effectiveCte}
+                SELECT
+                    rp.id as report_request_parameters_id,
+                    rp.name,
+                    rp.label,
+                    rp.description,
+                    rp.placeholder,
+                    rp.input_type,
+                    rp.input_option,
+                    rp.unit_text,
+                    rp.screening_cutoff,
+                    rp.confirmation_cutoff,
+                    rp.is_mandatory,
+                    a.id as answer_id,
+                    COALESCE(a.value, '') as value
+                FROM effective_params rp
+                LEFT JOIN lab_test_category_report_request_parameter_value a
+                    ON a.report_request_parameters_id = rp.id
+                   AND a.lab_test_category_report_id = $1
+                   AND a.deleted = false
+                WHERE rp.status IS DISTINCT FROM false
+                ORDER BY rp.id ASC
+            `;
+            const paramParams = [id, ...effectiveValues];
+            ({ rows: parameters } = await query(parametersQuery, paramParams));
+        } else {
+            const parametersQuery = `
+                SELECT
+                    rp.id as report_request_parameters_id,
+                    rp.name,
+                    rp.label,
+                    rp.description,
+                    rp.placeholder,
+                    rp.input_type,
+                    rp.input_option,
+                    rp.unit_text,
+                    rp.screening_cutoff,
+                    rp.confirmation_cutoff,
+                    rp.is_mandatory,
+                    a.id as answer_id,
+                    COALESCE(a.value, '') as value
+                FROM report_request_parameters rp
+                LEFT JOIN lab_test_category_report_request_parameter_value a
+                    ON a.report_request_parameters_id = rp.id
+                   AND a.lab_test_category_report_id = $1
+                   AND a.deleted = false
+                WHERE rp.lab_test_id = $2 AND rp.deleted = false
+                    AND rp.status IS DISTINCT FROM false
+                ORDER BY rp.id ASC
+            `;
+            ({ rows: parameters } = await query(parametersQuery, [id, report.lab_test_id]));
+        }
         report.testResultParameterList = parameters;
 
         const specimenFilter = b2bClientId

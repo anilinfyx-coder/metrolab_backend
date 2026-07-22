@@ -3,6 +3,7 @@ const router = express.Router();
 const { pool, query, queryOne } = require('../db');
 const { authMiddleware } = require('../middleware/auth');
 const { crudRoutes } = require('./crud');
+const { respondListQuery } = require('../utils/pagination');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
@@ -37,7 +38,7 @@ router.get('/', async (req, res) => {
             }
         }
 
-        const { rows } = await query(`
+        const dataSql = `
             SELECT 
                 ahc.*,
                 p.name, p.dob, p.gender as sex, p.mobile as tel, p.email as patient_email, p.uid as patient_uid,
@@ -49,11 +50,22 @@ router.get('/', async (req, res) => {
             FROM adult_health_certificates ahc
             LEFT JOIN patient p ON ahc.patient_id = p.id
             LEFT JOIN b2b_clients b2b ON p.b2b_client_id = b2b.id
-            WHERE ${whereClause}
-            ORDER BY ahc.creation_timestamp DESC
-        `, values);
+            WHERE ${whereClause}`;
 
-        return resp(res, '200', rows);
+        const countSql = `
+            SELECT COUNT(*)::int AS total
+            FROM adult_health_certificates ahc
+            LEFT JOIN patient p ON ahc.patient_id = p.id
+            LEFT JOIN b2b_clients b2b ON p.b2b_client_id = b2b.id
+            WHERE ${whereClause}`;
+
+        return await respondListQuery(req, res, resp, {
+            dataSql,
+            countSql,
+            params: values,
+            orderBy: 'ORDER BY ahc.creation_timestamp DESC',
+            defaultLimit: 25,
+        });
     } catch (err) {
         return resp(res, '500', err.message);
     }

@@ -60,3 +60,18 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
 
 CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_email ON password_reset_tokens(email);
 CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_hash ON password_reset_tokens(token_hash);
+
+-- ── B2B overrides for report result parameters ───────────────
+ALTER TABLE report_request_parameters ADD COLUMN IF NOT EXISTS source_parameter_id INT;
+CREATE INDEX IF NOT EXISTS idx_report_request_parameters_source_b2b
+    ON report_request_parameters(source_parameter_id, b2b_client_id)
+    WHERE deleted = false;
+
+-- ── Patient location (Country / State / City) ────────────────
+ALTER TABLE patient ADD COLUMN IF NOT EXISTS country_id INT;
+ALTER TABLE patient ADD COLUMN IF NOT EXISTS state_id INT;
+ALTER TABLE patient ADD COLUMN IF NOT EXISTS city_id INT;
+ALTER TABLE patient ADD COLUMN IF NOT EXISTS country VARCHAR(255);
+CREATE INDEX IF NOT EXISTS idx_patient_country_id ON patient(country_id);
+CREATE INDEX IF NOT EXISTS idx_patient_state_id ON patient(state_id);
+CREATE INDEX IF NOT EXISTS idx_patient_city_id ON patient(city_id);
