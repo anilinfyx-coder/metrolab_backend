@@ -46,6 +46,11 @@ const crudRoutes = (table, insertFields = []) => {
                 }
             }
 
+            // Hide the main super admin role (id 1) so it cannot be assigned to new staff
+            if (table === 'role_types') {
+                whereClause += ` AND id != 1`;
+            }
+
             const { rows } = await query(
                 `SELECT * FROM ${table} ${whereClause} ORDER BY id DESC`, values
             );

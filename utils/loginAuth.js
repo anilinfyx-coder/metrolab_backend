@@ -5,7 +5,7 @@ const ACCOUNT_DISABLED_MESSAGE =
     'Your account has been disabled. Please contact your administrator.';
 
 /** role_id for the primary Super Admin user — cannot be disabled. */
-const MAIN_SUPER_ADMIN_ROLE_ID = 2;
+const MAIN_SUPER_ADMIN_ROLE_ID = 1;
 
 async function passwordMatches(input, stored) {
     if (!stored) return false;

@@ -20,6 +20,11 @@ const upload = multer({ storage: multer.memoryStorage() });
 // ?json=1 returns { url } instead of redirect.
 router.get('/file/:filename', async (req, res) => {
     try {
+        const { isGcsConfigured } = require('../utils/gcs');
+        if (!isGcsConfigured()) {
+            return res.status(404).send('GCS not configured locally. Cannot serve file.');
+        }
+
         const url = await getSignedUrl(GCS_PREFIX + req.params.filename);
         if (String(req.query.json || '') === '1') {
             return resp(res, '200', { url, filename: req.params.filename });
@@ -62,7 +67,12 @@ router.post('/saveB2bClientDocument', upload.single('UploadFile'), async (req, r
 
         if (req.file) {
             fileName = generateFileName(req.file.originalname);
-            await uploadBuffer(req.file.buffer, GCS_PREFIX + fileName, req.file.mimetype);
+            const { isGcsConfigured } = require('../utils/gcs');
+            if (isGcsConfigured()) {
+                await uploadBuffer(req.file.buffer, GCS_PREFIX + fileName, req.file.mimetype);
+            } else {
+                console.warn('GCS is not configured. Skipping upload for local development.');
+            }
         }
 
         if (data.id && data.id !== '0' && data.id !== 'undefined' && data.id !== 'null') {
@@ -70,7 +80,10 @@ router.post('/saveB2bClientDocument', upload.single('UploadFile'), async (req, r
             const existing = await queryOne(`SELECT * FROM b2b_client_document WHERE id = $1`, [data.id]);
             if (req.file && existing && existing.file_name) {
                 // Delete old file if a new one is uploaded
-                await deleteObject(GCS_PREFIX + existing.file_name);
+                const { isGcsConfigured } = require('../utils/gcs');
+                if (isGcsConfigured()) {
+                    await deleteObject(GCS_PREFIX + existing.file_name);
+                }
             }
 
             await queryOne(`

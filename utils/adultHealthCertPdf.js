@@ -118,7 +118,8 @@ async function resolveLoggedInLab(authUser) {
 
     return queryOne(
         `SELECT company_name, logo_file, report_header_file, address, public_phone_no, public_fax,
-                public_email, website, medical_officer_signature_file_name, tagline
+                public_email, website, medical_officer_signature_file_name, tagline,
+                smtp_server, smtp_port, smtp_email, smtp_password
          FROM b2b_clients
          WHERE id = $1 AND deleted = false
          LIMIT 1`,

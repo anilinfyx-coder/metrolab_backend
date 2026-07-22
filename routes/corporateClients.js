@@ -68,7 +68,7 @@ router.post('/', async (req, res) => {
         if (row && row.email) {
             const lab = row.b2b_client_id
                 ? await queryOne(
-                    'SELECT company_name, tagline, logo_file, report_header_file FROM b2b_clients WHERE id = $1 LIMIT 1',
+                    'SELECT company_name, tagline, logo_file, report_header_file, smtp_server, smtp_port, smtp_email, smtp_password FROM b2b_clients WHERE id = $1 LIMIT 1',
                     [row.b2b_client_id]
                 )
                 : null;

@@ -5,7 +5,7 @@ const jwt = require('jsonwebtoken');
 const multer = require('multer');
 const { query, queryOne } = require('../db');
 const { JWT_SECRET, authMiddleware } = require('../middleware/auth');
-const { sendWelcomeB2BMail, sendWalletRechargeMail } = require('../utils/emailService');
+const { sendWelcomeB2BMail, sendWalletRechargeMail, verifySmtpCredentials } = require('../utils/emailService');
 const { validateUniqueLoginEmail, normalizeLoginEmail } = require('../utils/emailUniqueness');
 const { validateLoginUser } = require('../utils/loginAuth');
 const { uploadBuffer, getSignedUrl, generateFileName, PREFIX } = require('../utils/gcs');
@@ -30,6 +30,12 @@ const resp = (res, code, obj) => res.json({ response_code: code, obj });
 async function persistUploadedFiles(files) {
     const result = {};
     if (!files) return result;
+    
+    const { isGcsConfigured } = require('../utils/gcs');
+    if (!isGcsConfigured()) {
+        console.warn('GCS is not configured (missing GCS_BUCKET). Skipping file upload for local development.');
+        return result; // Skip GCS upload to avoid crashes locally without credentials
+    }
     for (const field of Object.keys(files)) {
         const file = files[field][0];
         const fileName = generateFileName(file.originalname);
@@ -39,11 +45,14 @@ async function persistUploadedFiles(files) {
     return result;
 }
 
-// GET file helper (public - no auth required) - redirects to a short-lived
-// pre-signed GCS URL rather than serving the file itself.
-// ?json=1 returns { url } instead of redirect (useful for API clients).
+// GET file helper (public - no auth required)
 router.get('/file/:filename', async (req, res) => {
     try {
+        const { isGcsConfigured } = require('../utils/gcs');
+        if (!isGcsConfigured()) {
+            return res.status(404).send('GCS not configured locally. Cannot serve file.');
+        }
+
         const url = await getSignedUrl(GCS_PREFIX + req.params.filename);
         if (String(req.query.json || '') === '1') {
             return resp(res, '200', { url, filename: req.params.filename });
@@ -251,6 +260,13 @@ router.post('/', uploadFields, async (req, res) => {
         const emailCheck = await validateUniqueLoginEmail(email);
         if (!emailCheck.ok) return resp(res, emailCheck.code, emailCheck.message);
 
+        if (smtp_server && smtp_port && smtp_email && smtp_password) {
+            const smtpCheck = await verifySmtpCredentials(smtp_server, smtp_port, smtp_email, smtp_password);
+            if (!smtpCheck.ok) {
+                return resp(res, '400', 'Invalid SMTP Credentials: ' + smtpCheck.error);
+            }
+        }
+
         const row = await queryOne(
             `INSERT INTO b2b_clients (
                 role_id, company_name, contact_person_name, mobile, public_phone_no,
@@ -277,7 +293,15 @@ router.post('/', uploadFields, async (req, res) => {
         );
 
         if (row && row.email) {
-            sendWelcomeB2BMail(row.email, row.company_name, password, row).catch(err => console.error('B2B Email error:', err));
+            // Strip smtp fields so the B2B welcome email is sent from the Superadmin (.env) credentials
+            // instead of the B2B client's newly added credentials, while preserving their branding.
+            const labForEmail = { ...row };
+            delete labForEmail.smtp_server;
+            delete labForEmail.smtp_port;
+            delete labForEmail.smtp_email;
+            delete labForEmail.smtp_password;
+            
+            sendWelcomeB2BMail(row.email, row.company_name, password, labForEmail).catch(err => console.error('B2B Email error:', err));
         }
 
         return resp(res, '200', row);
@@ -321,6 +345,13 @@ router.put('/:id', uploadFields, async (req, res) => {
             });
             if (!emailCheck.ok) return resp(res, emailCheck.code, emailCheck.message);
             body.email = normalizeLoginEmail(body.email);
+        }
+
+        if (body.smtp_server && body.smtp_port && body.smtp_email && body.smtp_password) {
+            const smtpCheck = await verifySmtpCredentials(body.smtp_server, body.smtp_port, body.smtp_email, body.smtp_password);
+            if (!smtpCheck.ok) {
+                return resp(res, '400', 'Invalid SMTP Credentials: ' + smtpCheck.error);
+            }
         }
 
         const fields = [
@@ -397,7 +428,7 @@ router.post('/rechargeWallet', authMiddleware, async (req, res) => {
 
         // We must lock the row or just do an atomic update
         const client = await queryOne(
-            `SELECT wallet_balance, company_name, email, tagline, logo_file, report_header_file
+            `SELECT wallet_balance, company_name, email, tagline, logo_file, report_header_file, smtp_server, smtp_port, smtp_email, smtp_password
              FROM b2b_clients WHERE id = $1`,
             [b2b_client_id]
         );

@@ -1,4 +1,9 @@
 const nodemailer = require('nodemailer');
+const dns = require('dns');
+// Force IPv4 first to prevent local ETIMEDOUT errors on broken IPv6 networks
+if (dns.setDefaultResultOrder) {
+    dns.setDefaultResultOrder('ipv4first');
+}
 require('dotenv').config();
 const { buildEmailBranding } = require('./emailBranding');
 const { getLoginUrl } = require('./frontendUrl');
@@ -13,15 +18,47 @@ function buildLoginLinkBlock(portalLabel = 'Portal') {
             </div>`;
 }
 
-const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: process.env.SMTP_PORT || 587,
-    secure: process.env.SMTP_PORT == 465,
-    auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-    },
-});
+const createTransporter = (lab) => {
+    if (lab && lab.smtp_server && lab.smtp_port && lab.smtp_email && lab.smtp_password) {
+        return nodemailer.createTransport({
+            host: lab.smtp_server,
+            port: Number(lab.smtp_port),
+            secure: Number(lab.smtp_port) === 465,
+            auth: {
+                user: lab.smtp_email,
+                pass: lab.smtp_password,
+            },
+        });
+    }
+
+    return nodemailer.createTransport({
+        host: process.env.SMTP_HOST || 'smtp.gmail.com',
+        port: process.env.SMTP_PORT || 587,
+        secure: process.env.SMTP_PORT == 465,
+        auth: {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASS,
+        },
+    });
+};
+
+const verifySmtpCredentials = async (host, port, user, pass) => {
+    const testTransporter = nodemailer.createTransport({
+        host: host,
+        port: Number(port),
+        secure: Number(port) === 465,
+        auth: {
+            user: user,
+            pass: pass,
+        },
+    });
+    try {
+        await testTransporter.verify();
+        return { ok: true };
+    } catch (err) {
+        return { ok: false, error: err.message };
+    }
+};
 
 const sendMail = async (to, subject, htmlContent, attachments = [], lab = null) => {
     try {
@@ -30,8 +67,18 @@ const sendMail = async (to, subject, htmlContent, attachments = [], lab = null) 
             ? [branding.logoAttachment, ...attachments]
             : attachments;
 
+        const transporter = createTransporter(lab);
+        
+        let fromName = process.env.SMTP_FROM_NAME || branding.companyName;
+        let fromEmail = process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER;
+        
+        if (lab && lab.smtp_server && lab.smtp_email) {
+            fromName = branding.companyName;
+            fromEmail = lab.smtp_email;
+        }
+
         const info = await transporter.sendMail({
-            from: `"${process.env.SMTP_FROM_NAME || branding.companyName}" <${process.env.SMTP_FROM_EMAIL || process.env.SMTP_USER}>`,
+            from: `"${fromName}" <${fromEmail}>`,
             to,
             subject,
             html: htmlContent,
@@ -263,4 +310,5 @@ module.exports = {
     sendLabTestCategoryReportMail,
     sendCertificateMail,
     sendPasswordResetMail,
+    verifySmtpCredentials,
 };
