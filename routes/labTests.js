@@ -3,6 +3,7 @@ const router = express.Router();
 const { query, queryOne } = require('../db');
 const { authMiddleware } = require('../middleware/auth');
 const { resolveAdminContext } = require('../utils/adminContext');
+const { respondListQuery } = require('../utils/pagination');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
@@ -66,8 +67,13 @@ router.get('/', async (req, res) => {
                 whereClause += ' AND status = false';
             }
         }
-        const { rows } = await query(`SELECT * FROM lab_tests ${whereClause} ORDER BY id DESC LIMIT 1000`);
-        return resp(res, '200', rows);
+        return await respondListQuery(req, res, resp, {
+            dataSql: `SELECT * FROM lab_tests ${whereClause}`,
+            countSql: `SELECT COUNT(*)::int AS total FROM lab_tests ${whereClause}`,
+            orderBy: 'ORDER BY id DESC',
+            legacyLimit: 1000,
+            defaultLimit: 10,
+        });
     } catch (err) { return resp(res, '500', err.message); }
 });
 

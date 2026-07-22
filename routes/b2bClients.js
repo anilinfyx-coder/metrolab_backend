@@ -309,6 +309,29 @@ router.post('/', uploadFields, async (req, res) => {
     } catch (err) { return resp(res, '500', err.message); }
 });
 
+// ── GET /api/B2bClients/dashboardStats ────────────────────────
+router.get('/dashboardStats', authMiddleware, async (req, res) => {
+    try {
+        if (req.user?.portal !== 'b2b') {
+            return resp(res, '403', 'Forbidden');
+        }
+
+        const { rows } = await query(
+            `SELECT COUNT(*)::int AS count
+             FROM lab_test_category_report
+             WHERE deleted = false AND b2b_client_id = $1`,
+            [req.user.id]
+        );
+
+        return resp(res, '200', {
+            total_completed_tests: rows[0]?.count ?? 0,
+        });
+    } catch (err) {
+        console.error(err);
+        return resp(res, '500', err.message);
+    }
+});
+
 // ── GET /api/B2bClients/:id ───────────────────────────────────
 router.get('/:id', async (req, res) => {
     try {

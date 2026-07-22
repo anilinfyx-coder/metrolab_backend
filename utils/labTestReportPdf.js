@@ -12,6 +12,7 @@ const {
     resolveUploadedFilePath,
 } = require('./uploadedFiles');
 const { PREFIX } = require('./gcs');
+const { buildEffectiveParamsCte } = require('./reportRequestParameters');
 const {
     resolveCertLabBranding,
     resolveCertLogoPath,
@@ -192,29 +193,49 @@ async function loadLabTestReportBundle(reportId) {
         )
         : null;
 
-    const paramFilter = b2bClientId
-        ? `rp.lab_test_id = $2 AND rp.deleted = false AND (rp.b2b_client_id = $3 OR rp.b2b_client_id IS NULL)`
-        : `rp.lab_test_id = $2 AND rp.deleted = false`;
-    const paramParams = b2bClientId
-        ? [reportId, report.lab_test_id, b2bClientId]
-        : [reportId, report.lab_test_id];
-
-    const { rows: parameters } = await query(
-        `SELECT rp.id,
-                COALESCE(rp.label, rp.name) as label,
-                rp.screening_cutoff,
-                rp.confirmation_cutoff,
-                rp.unit_text,
-                COALESCE(v.value, '') as value
-         FROM report_request_parameters rp
-         LEFT JOIN lab_test_category_report_request_parameter_value v
-           ON v.report_request_parameters_id = rp.id
-          AND v.lab_test_category_report_id = $1
-          AND v.deleted = false
-         WHERE ${paramFilter}
-         ORDER BY rp.id ASC`,
-        paramParams
-    );
+    let parameters;
+    if (b2bClientId) {
+        const { sql: effectiveCte, values: effectiveValues } = buildEffectiveParamsCte(
+            b2bClientId,
+            report.lab_test_id,
+            2,
+        );
+        const paramParams = [reportId, ...effectiveValues];
+        ({ rows: parameters } = await query(
+            `WITH ${effectiveCte}
+             SELECT rp.id,
+                    COALESCE(rp.label, rp.name) as label,
+                    rp.screening_cutoff,
+                    rp.confirmation_cutoff,
+                    rp.unit_text,
+                    COALESCE(v.value, '') as value
+             FROM effective_params rp
+             LEFT JOIN lab_test_category_report_request_parameter_value v
+               ON v.report_request_parameters_id = rp.id
+              AND v.lab_test_category_report_id = $1
+              AND v.deleted = false
+             WHERE rp.status IS DISTINCT FROM false
+             ORDER BY rp.id ASC`,
+            paramParams,
+        ));
+    } else {
+        ({ rows: parameters } = await query(
+            `SELECT rp.id,
+                    COALESCE(rp.label, rp.name) as label,
+                    rp.screening_cutoff,
+                    rp.confirmation_cutoff,
+                    rp.unit_text,
+                    COALESCE(v.value, '') as value
+             FROM report_request_parameters rp
+             LEFT JOIN lab_test_category_report_request_parameter_value v
+               ON v.report_request_parameters_id = rp.id
+              AND v.lab_test_category_report_id = $1
+              AND v.deleted = false
+             WHERE rp.lab_test_id = $2 AND rp.deleted = false
+             ORDER BY rp.id ASC`,
+            [reportId, report.lab_test_id],
+        ));
+    }
 
     return { report, b2b, parameters, labTest, b2bClientId };
 }

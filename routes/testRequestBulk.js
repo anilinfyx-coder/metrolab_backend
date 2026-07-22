@@ -7,6 +7,7 @@ const { authMiddleware } = require('../middleware/auth');
 const { resolveAdminContext } = require('../utils/adminContext');
 const { encryptPII } = require('../utils/cryptoUtils');
 const { sendLabNotificationMail, sendTestRequestEmployeeReportMail } = require('../utils/emailService');
+const { respondListQuery } = require('../utils/pagination');
 
 router.use(authMiddleware);
 
@@ -39,17 +40,7 @@ router.get('/', async (req, res) => {
             }
         }
 
-        const { rows } = await query(`
-            SELECT t.*, c.company_name as "corporateClientCompany", b.company_name as "b2bClientCompany"
-            FROM test_request t
-            LEFT JOIN corporate_clients c ON t.corporate_client_id = c.id
-            LEFT JOIN b2b_clients b ON t.b2b_client_id = b.id
-            WHERE ${whereClause}
-            ORDER BY t.id DESC
-        `, values);
-        
-        // Format for listing UI: DD-MM-YYYY HH:MM:SS
-        const formatted = rows.map(r => {
+        const formatTestRequestRow = (r) => {
             const date = new Date(r.creation_timestamp);
             const pad = (n) => String(n).padStart(2, '0');
             const dateTime = Number.isNaN(date.getTime())
@@ -70,9 +61,30 @@ router.get('/', async (req, res) => {
                 creation_timestamp: r.creation_timestamp,
                 creationTimestamp: dateTime,
             };
-        });
+        };
 
-        return resp(res, '200', formatted);
+        const dataSql = `
+            SELECT t.*, c.company_name as "corporateClientCompany", b.company_name as "b2bClientCompany"
+            FROM test_request t
+            LEFT JOIN corporate_clients c ON t.corporate_client_id = c.id
+            LEFT JOIN b2b_clients b ON t.b2b_client_id = b.id
+            WHERE ${whereClause}`;
+
+        const countSql = `
+            SELECT COUNT(*)::int AS total
+            FROM test_request t
+            LEFT JOIN corporate_clients c ON t.corporate_client_id = c.id
+            LEFT JOIN b2b_clients b ON t.b2b_client_id = b.id
+            WHERE ${whereClause}`;
+
+        return await respondListQuery(req, res, resp, {
+            dataSql,
+            countSql,
+            params: values,
+            orderBy: 'ORDER BY t.id DESC',
+            defaultLimit: 25,
+            mapRow: formatTestRequestRow,
+        });
     } catch (err) {
         console.error(err);
         return resp(res, '500', err.message);

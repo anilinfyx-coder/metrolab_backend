@@ -4,6 +4,7 @@ const { pool, query, queryOne, formatDbError, isTooManyConnectionsError } = requ
 const { authMiddleware } = require('../middleware/auth');
 const { resolveAdminContext } = require('../utils/adminContext');
 const { encryptPII, decryptPII } = require('../utils/cryptoUtils');
+const { respondListQuery } = require('../utils/pagination');
 
 function mapPatient(p) {
     if (!p) return p;
@@ -71,13 +72,27 @@ router.get('/', async (req, res) => {
             }
         }
 
-        const { rows } = await query(
-            `SELECT p.*, b.company_name as b2b_client_name 
+        const dataSql = `
+             SELECT p.*, b.company_name as b2b_client_name 
              FROM patient p
              LEFT JOIN b2b_clients b ON b.id = p.b2b_client_id
-             ${whereClause} ORDER BY p.id DESC LIMIT 1000`, params
-        );
-        return resp(res, '200', rows.map(mapPatient));
+             ${whereClause}`;
+
+        const countSql = `
+             SELECT COUNT(*)::int AS total
+             FROM patient p
+             LEFT JOIN b2b_clients b ON b.id = p.b2b_client_id
+             ${whereClause}`;
+
+        return await respondListQuery(req, res, resp, {
+            dataSql,
+            countSql,
+            params,
+            orderBy: 'ORDER BY p.id DESC',
+            legacyLimit: 1000,
+            defaultLimit: 25,
+            mapRow: mapPatient,
+        });
     } catch (err) {
         return resp(res, '500', err.message);
     }
@@ -169,8 +184,8 @@ router.post('/', async (req, res) => {
         client = await pool.connect();
         const {
             b2b_client_id, uid, name, driving_license, mobile, email, gender, dob,
-            street1, street2, city, state, zipcode, driving_license_state, ssn,
-            user_id, role_type_id
+            street1, street2, country_id, state_id, city_id, country, city, state,
+            zipcode, driving_license_state, ssn, user_id, role_type_id
         } = req.body;
 
         const ctx = await resolveAdminContextForRequest(req.user.id);
@@ -194,9 +209,10 @@ router.post('/', async (req, res) => {
         const insert = await client.query(
             `INSERT INTO patient 
                 (b2b_client_id, uid, name, driving_license, mobile, email, gender, dob,
-                 street1, street2, city, state, zipcode, driving_license_state, ssn,
+                 street1, street2, country_id, state_id, city_id, country, city, state,
+                 zipcode, driving_license_state, ssn,
                  created_by_id, user_id, role_type_id, status, deleted, creation_timestamp)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,true,false,NOW())
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,true,false,NOW())
              RETURNING *`,
             [
                 b2b_client_id || ctx.b2b_client_id,
@@ -209,6 +225,10 @@ router.post('/', async (req, res) => {
                 encryptPII(dob),
                 street1,
                 street2,
+                country_id || null,
+                state_id || null,
+                city_id || null,
+                country || null,
                 city,
                 state,
                 zipcode,
@@ -242,7 +262,8 @@ router.post('/', async (req, res) => {
 router.put('/:id', async (req, res) => {
     try {
         const { name, driving_license, mobile, email, gender, dob,
-                street1, street2, city, state, zipcode, driving_license_state, ssn, status } = req.body;
+                street1, street2, country_id, state_id, city_id, country, city, state,
+                zipcode, driving_license_state, ssn, status } = req.body;
         const patient = await queryOne(
             `UPDATE patient SET
                 name = COALESCE($1, name),
@@ -253,15 +274,20 @@ router.put('/:id', async (req, res) => {
                 dob = COALESCE($6, dob),
                 street1 = COALESCE($7, street1),
                 street2 = COALESCE($8, street2),
-                city = COALESCE($9, city),
-                state = COALESCE($10, state),
-                zipcode = COALESCE($11, zipcode),
-                driving_license_state = COALESCE($12, driving_license_state),
-                ssn = COALESCE($13, ssn),
-                status = COALESCE($14, status)
-             WHERE id = $15 RETURNING *`,
+                country_id = COALESCE($9, country_id),
+                state_id = COALESCE($10, state_id),
+                city_id = COALESCE($11, city_id),
+                country = COALESCE($12, country),
+                city = COALESCE($13, city),
+                state = COALESCE($14, state),
+                zipcode = COALESCE($15, zipcode),
+                driving_license_state = COALESCE($16, driving_license_state),
+                ssn = COALESCE($17, ssn),
+                status = COALESCE($18, status)
+             WHERE id = $19 RETURNING *`,
             [name, driving_license ? encryptPII(driving_license) : null, mobile, email, gender, dob ? encryptPII(dob) : null,
-             street1, street2, city, state, zipcode, driving_license_state, ssn ? encryptPII(ssn) : null, status,
+             street1, street2, country_id || null, state_id || null, city_id || null, country || null,
+             city, state, zipcode, driving_license_state, ssn ? encryptPII(ssn) : null, status,
              req.params.id]
         );
         return resp(res, '200', mapPatient(patient));

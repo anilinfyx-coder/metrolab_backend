@@ -8,6 +8,8 @@ const {
     loadB2bLabTestAccess,
     resolveOwnerB2bClientId,
 } = require('../utils/labTestDisplayOptions');
+const { respondListQuery } = require('../utils/pagination');
+const { buildEffectiveParamsCte } = require('../utils/reportRequestParameters');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
@@ -37,7 +39,7 @@ router.get('/', async (req, res) => {
             }
         }
 
-        const { rows } = await query(`
+        const dataSql = `
             SELECT wl.*,
                    p.name as patient_name, p.mobile as patient_mobile, p.dob as patient_dob,
                    p.ssn as patient_ssn, p.uid as patient_uid,
@@ -54,10 +56,22 @@ router.get('/', async (req, res) => {
                    ), 0) AS test_count
             FROM waiting_list wl
             LEFT JOIN patient p ON p.id = wl.patient_id
-            ${whereClause}
-            ORDER BY wl.id DESC LIMIT 1000
-        `, params);
-        return resp(res, '200', rows);
+            ${whereClause}`;
+
+        const countSql = `
+            SELECT COUNT(*)::int AS total
+            FROM waiting_list wl
+            LEFT JOIN patient p ON p.id = wl.patient_id
+            ${whereClause}`;
+
+        return await respondListQuery(req, res, resp, {
+            dataSql,
+            countSql,
+            params,
+            orderBy: 'ORDER BY wl.id DESC',
+            legacyLimit: 1000,
+            defaultLimit: 10,
+        });
     } catch (err) { return resp(res, '500', err.message); }
 });
 
@@ -171,16 +185,26 @@ router.get('/:id', async (req, res) => {
             tests[i].testReportQuestionList = questions;
 
             // Get parameters (enabled only)
-            const paramFilter = b2bClientId
-                ? `lab_test_id = $1 AND deleted = false AND (b2b_client_id = $2 OR b2b_client_id IS NULL)`
-                : `lab_test_id = $1 AND deleted = false`;
-            const paramParams = b2bClientId ? [testId, b2bClientId] : [testId];
-            const { rows: parameters } = await query(
-                `SELECT * FROM report_request_parameters
-                 WHERE ${paramFilter} AND status IS DISTINCT FROM false
-                 ORDER BY id ASC`,
-                paramParams
-            );
+            let parameters;
+            if (b2bClientId) {
+                const { sql: effectiveCte, values: effectiveValues } = buildEffectiveParamsCte(b2bClientId, testId, 1);
+                const { rows } = await query(
+                    `WITH ${effectiveCte}
+                     SELECT * FROM effective_params
+                     WHERE status IS DISTINCT FROM false
+                     ORDER BY id ASC`,
+                    effectiveValues,
+                );
+                parameters = rows;
+            } else {
+                const { rows } = await query(
+                    `SELECT * FROM report_request_parameters
+                     WHERE lab_test_id = $1 AND deleted = false AND status IS DISTINCT FROM false
+                     ORDER BY id ASC`,
+                    [testId],
+                );
+                parameters = rows;
+            }
             tests[i].testResultParameterList = parameters;
 
             // Get mapped specimen types (enabled links + enabled specimen types only)
