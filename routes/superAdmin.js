@@ -46,6 +46,82 @@ let dashboardCache = {
 };
 const CACHE_TTL = 2 * 60 * 1000; // 2 minutes
 
+function normalizeRevenueRange(raw) {
+    const value = String(raw || '6m').toLowerCase();
+    if (value === '7d' || value === 'current_month' || value === 'last_month' || value === '6m') {
+        return value;
+    }
+    // Backward compatible: months=6 style
+    if (String(raw) === '6') return '6m';
+    return '6m';
+}
+
+async function fetchRevenueSubscriptionOverview(rangeInput) {
+    const range = normalizeRevenueRange(rangeInput);
+
+    if (range === '6m') {
+        const { rows } = await query(
+            `WITH months AS (
+                SELECT date_trunc('month', CURRENT_DATE) - (n || ' months')::interval AS month_start
+                FROM generate_series(0, 5) AS n
+             )
+             SELECT
+                to_char(m.month_start, 'YYYY-MM') AS month_key,
+                to_char(m.month_start, 'Mon ''YY') AS label,
+                COALESCE(SUM(s.amount), 0)::float AS revenue,
+                COUNT(s.id)::int AS subscriptions
+             FROM months m
+             LEFT JOIN b2b_client_subscription s
+               ON s.deleted = false
+              AND date_trunc('month', COALESCE(s.creation_timestamp::date, s.start_date)) = m.month_start
+             GROUP BY m.month_start
+             ORDER BY m.month_start ASC`
+        );
+        return { range, granularity: 'month', items: rows };
+    }
+
+    let startExpr;
+    let endExpr;
+    if (range === '7d') {
+        startExpr = `CURRENT_DATE - 6`;
+        endExpr = `CURRENT_DATE`;
+    } else if (range === 'current_month') {
+        startExpr = `date_trunc('month', CURRENT_DATE)::date`;
+        endExpr = `CURRENT_DATE`;
+    } else {
+        // last_month
+        startExpr = `(date_trunc('month', CURRENT_DATE) - INTERVAL '1 month')::date`;
+        endExpr = `(date_trunc('month', CURRENT_DATE) - INTERVAL '1 day')::date`;
+    }
+
+    const { rows } = await query(
+        `WITH days AS (
+            SELECT generate_series(${startExpr}, ${endExpr}, '1 day'::interval)::date AS day
+         ),
+         counts AS (
+            SELECT
+                COALESCE(s.creation_timestamp::date, s.start_date) AS day,
+                COALESCE(SUM(s.amount), 0)::float AS revenue,
+                COUNT(s.id)::int AS subscriptions
+            FROM b2b_client_subscription s
+            WHERE s.deleted = false
+              AND COALESCE(s.creation_timestamp::date, s.start_date) >= (${startExpr})
+              AND COALESCE(s.creation_timestamp::date, s.start_date) <= (${endExpr})
+            GROUP BY COALESCE(s.creation_timestamp::date, s.start_date)
+         )
+         SELECT
+            to_char(d.day, 'YYYY-MM-DD') AS month_key,
+            to_char(d.day, 'Mon DD') AS label,
+            COALESCE(c.revenue, 0)::float AS revenue,
+            COALESCE(c.subscriptions, 0)::int AS subscriptions
+         FROM days d
+         LEFT JOIN counts c ON c.day = d.day
+         ORDER BY d.day ASC`
+    );
+
+    return { range, granularity: 'day', items: rows };
+}
+
 router.get('/dashboardStats', async (req, res) => {
     try {
         const now = Date.now();
@@ -201,7 +277,7 @@ router.get('/testStatusDistribution', async (req, res) => {
 router.get('/dashboardOverview', async (req, res) => {
     try {
         const activityRange = String(req.query.activityRange || '7d').toLowerCase() === '30d' ? 30 : 7;
-        const revenueMonths = Math.min(Math.max(parseInt(req.query.months, 10) || 6, 1), 24);
+        const revenueRange = normalizeRevenueRange(req.query.revenueRange || req.query.months || '6m');
         const listLimit = 5;
         const lowWalletThreshold = 50;
 
@@ -216,7 +292,7 @@ router.get('/dashboardOverview', async (req, res) => {
             topTests,
             activityRows,
             statusRow,
-            revenueRows,
+            revenueData,
             expiring,
             expired,
             lowWallets,
@@ -308,24 +384,7 @@ router.get('/dashboardOverview', async (req, res) => {
                   AND r.lab_test_id = wtl.lab_test_id
                  WHERE wtl.deleted = false`
             ),
-            query(
-                `WITH months AS (
-                    SELECT date_trunc('month', CURRENT_DATE) - (n || ' months')::interval AS month_start
-                    FROM generate_series(0, $1::int - 1) AS n
-                 )
-                 SELECT
-                    to_char(m.month_start, 'YYYY-MM') AS month_key,
-                    to_char(m.month_start, 'Mon ''YY') AS label,
-                    COALESCE(SUM(s.amount), 0)::float AS revenue,
-                    COUNT(s.id)::int AS subscriptions
-                 FROM months m
-                 LEFT JOIN b2b_client_subscription s
-                   ON s.deleted = false
-                  AND date_trunc('month', COALESCE(s.creation_timestamp::date, s.start_date)) = m.month_start
-                 GROUP BY m.month_start
-                 ORDER BY m.month_start ASC`,
-                [revenueMonths]
-            ),
+            fetchRevenueSubscriptionOverview(revenueRange),
             queryOne(
                 `SELECT COUNT(*)::int AS count
                  FROM b2b_client_subscription s
@@ -385,10 +444,7 @@ router.get('/dashboardOverview', async (req, res) => {
                 pending: parseInt(statusRow?.pending || 0, 10),
                 total: parseInt(statusRow?.total || 0, 10),
             },
-            revenue: {
-                months: revenueMonths,
-                items: revenueRows.rows || [],
-            },
+            revenue: revenueData,
             alerts: {
                 expiring_subscriptions: parseInt(expiring?.count || 0, 10),
                 expired_subscriptions: parseInt(expired?.count || 0, 10),
@@ -402,29 +458,11 @@ router.get('/dashboardOverview', async (req, res) => {
     }
 });
 
-// GET /api/SuperAdmin/revenueSubscriptionOverview?months=6
+// GET /api/SuperAdmin/revenueSubscriptionOverview?range=7d|current_month|last_month|6m
 router.get('/revenueSubscriptionOverview', async (req, res) => {
     try {
-        const months = Math.min(Math.max(parseInt(req.query.months, 10) || 6, 1), 24);
-        const { rows } = await query(
-            `WITH months AS (
-                SELECT date_trunc('month', CURRENT_DATE) - (n || ' months')::interval AS month_start
-                FROM generate_series(0, $1::int - 1) AS n
-             )
-             SELECT
-                to_char(m.month_start, 'YYYY-MM') AS month_key,
-                to_char(m.month_start, 'Mon ''YY') AS label,
-                COALESCE(SUM(s.amount), 0)::float AS revenue,
-                COUNT(s.id)::int AS subscriptions
-             FROM months m
-             LEFT JOIN b2b_client_subscription s
-               ON s.deleted = false
-              AND date_trunc('month', COALESCE(s.creation_timestamp::date, s.start_date)) = m.month_start
-             GROUP BY m.month_start
-             ORDER BY m.month_start ASC`,
-            [months]
-        );
-        return resp(res, '200', { months, items: rows });
+        const data = await fetchRevenueSubscriptionOverview(req.query.range || req.query.months || '6m');
+        return resp(res, '200', data);
     } catch (err) {
         console.error(err);
         return resp(res, '500', err.message);
@@ -480,6 +518,294 @@ router.get('/dashboardAlerts', async (req, res) => {
             expired_subscriptions: parseInt(expired?.count || 0, 10),
             low_wallets: parseInt(lowWallets?.count || 0, 10),
             low_wallet_threshold: lowWalletThreshold,
+        });
+    } catch (err) {
+        console.error(err);
+        return resp(res, '500', err.message);
+    }
+});
+
+// GET /api/SuperAdmin/b2bClientOverview/:id — read-only B2B lab profile bundle
+router.get('/b2bClientOverview/:id', async (req, res) => {
+    try {
+        const clientId = parseInt(req.params.id, 10);
+        if (!Number.isFinite(clientId) || clientId <= 0) {
+            return resp(res, '400', 'Invalid B2B client id');
+        }
+
+        const activityRange = String(req.query.activityRange || '7d').toLowerCase() === '30d' ? 30 : 7;
+        const listLimit = 5;
+        const lowWalletThreshold = 50;
+
+        const client = await queryOne(
+            `SELECT id, company_name, contact_person_name, mobile, email, public_phone_no,
+                    public_email, address, website, tagline, logo_file, primary_color_code,
+                    status, wallet_balance, is_fixed_price, fixed_price_amount,
+                    creation_timestamp, support_person_name, support_mobile, support_email
+             FROM b2b_clients
+             WHERE id = $1 AND deleted = false
+             LIMIT 1`,
+            [clientId]
+        );
+        if (!client) return resp(res, '404', 'B2B Lab not found');
+
+        const [
+            patientsCount,
+            corporatesCount,
+            assignedTestsCount,
+            completedCount,
+            pendingRow,
+            activeSub,
+            latestSub,
+            activityRows,
+            assignedTests,
+            recentPatients,
+            recentReports,
+            walletTxns,
+            subscriptions,
+            lastReport,
+            lastPatient,
+        ] = await Promise.all([
+            queryOne(
+                `SELECT COUNT(*)::int AS count
+                 FROM patient
+                 WHERE deleted = false AND b2b_client_id = $1`,
+                [clientId]
+            ),
+            queryOne(
+                `SELECT COUNT(*)::int AS count
+                 FROM corporate_clients
+                 WHERE deleted = false AND b2b_client_id = $1`,
+                [clientId]
+            ),
+            queryOne(
+                `SELECT COUNT(*)::int AS count
+                 FROM b2b_client_lab_test_access a
+                 INNER JOIN lab_tests lt ON lt.id = a.lab_test_id AND lt.deleted = false
+                 WHERE a.deleted = false
+                   AND a.b2b_client_id = $1
+                   AND a.status IS DISTINCT FROM false`,
+                [clientId]
+            ),
+            queryOne(
+                `SELECT COUNT(*)::int AS count
+                 FROM lab_test_category_report
+                 WHERE deleted = false AND b2b_client_id = $1`,
+                [clientId]
+            ),
+            queryOne(
+                `SELECT
+                    COUNT(*)::int AS total,
+                    COUNT(*) FILTER (WHERE r.waiting_list_id IS NOT NULL)::int AS completed,
+                    COUNT(*) FILTER (WHERE r.waiting_list_id IS NULL)::int AS pending
+                 FROM waiting_test_lab_test wtl
+                 INNER JOIN waiting_list wl
+                   ON wl.id = wtl.waiting_list_id
+                  AND wl.deleted = false
+                  AND wl.b2b_client_id = $1
+                 LEFT JOIN (
+                    SELECT DISTINCT waiting_list_id, lab_test_id
+                    FROM lab_test_category_report
+                    WHERE deleted = false
+                 ) r
+                   ON r.waiting_list_id = wl.id
+                  AND r.lab_test_id = wtl.lab_test_id
+                 WHERE wtl.deleted = false`,
+                [clientId]
+            ),
+            queryOne(
+                `SELECT id, start_date, end_date, amount, status, creation_timestamp
+                 FROM b2b_client_subscription
+                 WHERE deleted = false
+                   AND b2b_client_id = $1
+                   AND status IS DISTINCT FROM false
+                   AND start_date <= CURRENT_DATE
+                   AND end_date >= CURRENT_DATE
+                 ORDER BY end_date DESC, id DESC
+                 LIMIT 1`,
+                [clientId]
+            ),
+            queryOne(
+                `SELECT id, start_date, end_date, amount, status, creation_timestamp
+                 FROM b2b_client_subscription
+                 WHERE deleted = false AND b2b_client_id = $1
+                 ORDER BY end_date DESC NULLS LAST, id DESC
+                 LIMIT 1`,
+                [clientId]
+            ),
+            query(
+                `WITH days AS (
+                    SELECT generate_series(
+                        CURRENT_DATE - ($2::int - 1),
+                        CURRENT_DATE,
+                        '1 day'::interval
+                    )::date AS day
+                 ),
+                 counts AS (
+                    SELECT creation_timestamp::date AS day, COUNT(*)::int AS count
+                    FROM lab_test_category_report
+                    WHERE deleted = false
+                      AND b2b_client_id = $1
+                      AND creation_timestamp >= (CURRENT_DATE - ($2::int - 1))
+                      AND creation_timestamp < (CURRENT_DATE + 1)
+                    GROUP BY creation_timestamp::date
+                 )
+                 SELECT
+                    to_char(d.day, 'YYYY-MM-DD') AS date,
+                    to_char(d.day, 'Mon DD') AS label,
+                    COALESCE(c.count, 0)::int AS count
+                 FROM days d
+                 LEFT JOIN counts c ON c.day = d.day
+                 ORDER BY d.day ASC`,
+                [clientId, activityRange]
+            ),
+            query(
+                `SELECT
+                    lt.id AS lab_test_id,
+                    lt.name AS lab_test_name,
+                    a.status AS access_status,
+                    (
+                        SELECT COUNT(*)::int
+                        FROM lab_test_category_report r
+                        WHERE r.deleted = false
+                          AND r.b2b_client_id = $1
+                          AND r.lab_test_id = lt.id
+                    ) AS completed_count,
+                    (
+                        SELECT COUNT(*)::int
+                        FROM waiting_test_lab_test wtl
+                        INNER JOIN waiting_list wl
+                          ON wl.id = wtl.waiting_list_id
+                         AND wl.deleted = false
+                         AND wl.b2b_client_id = $1
+                        LEFT JOIN (
+                            SELECT DISTINCT waiting_list_id, lab_test_id
+                            FROM lab_test_category_report
+                            WHERE deleted = false
+                        ) r
+                          ON r.waiting_list_id = wl.id
+                         AND r.lab_test_id = wtl.lab_test_id
+                        WHERE wtl.deleted = false
+                          AND wtl.lab_test_id = lt.id
+                          AND r.waiting_list_id IS NULL
+                    ) AS pending_count
+                 FROM b2b_client_lab_test_access a
+                 INNER JOIN lab_tests lt ON lt.id = a.lab_test_id AND lt.deleted = false
+                 WHERE a.deleted = false
+                   AND a.b2b_client_id = $1
+                   AND a.status IS DISTINCT FROM false
+                 ORDER BY completed_count DESC, lt.name ASC
+                 LIMIT $2`,
+                [clientId, listLimit]
+            ),
+            query(
+                `SELECT id, name, mobile, email, uid, creation_timestamp, status
+                 FROM patient
+                 WHERE deleted = false AND b2b_client_id = $1
+                 ORDER BY creation_timestamp DESC NULLS LAST, id DESC
+                 LIMIT $2`,
+                [clientId, listLimit]
+            ),
+            query(
+                `SELECT r.id, r.uid, r.final_result, r.report_status, r.creation_timestamp,
+                        r.reported_timestamp, lt.name AS lab_test_name, p.name AS patient_name
+                 FROM lab_test_category_report r
+                 LEFT JOIN lab_tests lt ON lt.id = r.lab_test_id
+                 LEFT JOIN patient p ON p.id = r.patient_id
+                 WHERE r.deleted = false AND r.b2b_client_id = $1
+                 ORDER BY r.creation_timestamp DESC NULLS LAST, r.id DESC
+                 LIMIT $2`,
+                [clientId, listLimit]
+            ),
+            query(
+                `SELECT id, transaction_type, amount, closing_balance, description, creation_timestamp
+                 FROM b2b_wallet_transactions
+                 WHERE b2b_client_id = $1
+                 ORDER BY creation_timestamp DESC NULLS LAST, id DESC
+                 LIMIT $2`,
+                [clientId, listLimit]
+            ),
+            query(
+                `SELECT id, start_date, end_date, amount, status, creation_timestamp
+                 FROM b2b_client_subscription
+                 WHERE deleted = false AND b2b_client_id = $1
+                 ORDER BY end_date DESC NULLS LAST, id DESC
+                 LIMIT $2`,
+                [clientId, listLimit]
+            ),
+            queryOne(
+                `SELECT creation_timestamp
+                 FROM lab_test_category_report
+                 WHERE deleted = false AND b2b_client_id = $1
+                 ORDER BY creation_timestamp DESC NULLS LAST
+                 LIMIT 1`,
+                [clientId]
+            ),
+            queryOne(
+                `SELECT creation_timestamp
+                 FROM patient
+                 WHERE deleted = false AND b2b_client_id = $1
+                 ORDER BY creation_timestamp DESC NULLS LAST
+                 LIMIT 1`,
+                [clientId]
+            ),
+        ]);
+
+        const walletBalance = parseFloat(client.wallet_balance || 0);
+        let walletHealth = 'healthy';
+        if (walletBalance <= 0) walletHealth = 'critical';
+        else if (walletBalance <= lowWalletThreshold) walletHealth = 'low';
+
+        let subscriptionStatus = 'none';
+        if (activeSub) {
+            const endDate = activeSub.end_date ? new Date(activeSub.end_date) : null;
+            const in7Days = new Date();
+            in7Days.setHours(0, 0, 0, 0);
+            in7Days.setDate(in7Days.getDate() + 7);
+            if (endDate && endDate <= in7Days) subscriptionStatus = 'expiring';
+            else subscriptionStatus = 'active';
+        } else if (latestSub) {
+            subscriptionStatus = 'expired';
+        }
+
+        const completed = parseInt(completedCount?.count || 0, 10);
+        const pending = parseInt(pendingRow?.pending || 0, 10);
+        const waitingCompleted = parseInt(pendingRow?.completed || 0, 10);
+        const waitingTotal = parseInt(pendingRow?.total || 0, 10);
+
+        return resp(res, '200', {
+            client,
+            kpis: {
+                patients: parseInt(patientsCount?.count || 0, 10),
+                corporates: parseInt(corporatesCount?.count || 0, 10),
+                assigned_tests: parseInt(assignedTestsCount?.count || 0, 10),
+                completed_tests: completed,
+                pending_tests: pending,
+                wallet_balance: walletBalance,
+            },
+            health: {
+                subscription_status: subscriptionStatus,
+                active_subscription: activeSub || null,
+                latest_subscription: latestSub || null,
+                wallet_health: walletHealth,
+                low_wallet_threshold: lowWalletThreshold,
+                last_report_at: lastReport?.creation_timestamp || null,
+                last_patient_at: lastPatient?.creation_timestamp || null,
+            },
+            activity: {
+                range: `${activityRange}d`,
+                items: activityRows.rows || [],
+            },
+            status_distribution: {
+                completed: waitingCompleted,
+                pending,
+                total: waitingTotal,
+            },
+            assigned_tests: assignedTests.rows || [],
+            recent_patients: recentPatients.rows || [],
+            recent_reports: recentReports.rows || [],
+            wallet_transactions: walletTxns.rows || [],
+            subscriptions: subscriptions.rows || [],
         });
     } catch (err) {
         console.error(err);
