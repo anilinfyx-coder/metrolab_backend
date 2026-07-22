@@ -5,7 +5,8 @@ const { PREFIX } = require('./gcs');
 const LOGO_CID = 'email-brand-logo';
 
 const B2B_BRANDING_SELECT = `
-    company_name, tagline, logo_file, report_header_file, email, public_email
+    company_name, tagline, logo_file, report_header_file, email, public_email,
+    smtp_server, smtp_port, smtp_email, smtp_password
 `;
 
 function normalizeText(value, fallback = '') {

@@ -153,7 +153,7 @@ router.post('/saveTestRequestInBulk', async (req, res) => {
 
         if (b2bClientId) {
             const b2bClient = await queryOne(
-                `SELECT email, company_name, tagline, logo_file, report_header_file
+                `SELECT email, company_name, tagline, logo_file, report_header_file, smtp_server, smtp_port, smtp_email, smtp_password
                  FROM b2b_clients WHERE id = $1`,
                 [b2bClientId]
             );

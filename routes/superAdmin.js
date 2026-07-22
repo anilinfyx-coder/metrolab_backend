@@ -135,7 +135,9 @@ router.get('/', async (req, res) => {
     try {
         const { rows } = await query(
             `SELECT id, name, email, mobile, role_id, role_type_id, uid, image_file, user_id, status, deleted
-             FROM super_admin WHERE deleted = false ORDER BY id DESC`
+             FROM super_admin 
+             WHERE deleted = false AND role_id != 1 
+             ORDER BY id DESC`
         );
         return resp(res, '200', rows);
     } catch (err) {
@@ -161,6 +163,10 @@ router.get('/:id', async (req, res) => {
 // ── POST /api/SuperAdmin ─────────────────────────────────────
 router.post('/', async (req, res) => {
     try {
+        if (!isMainSuperAdmin(req.user)) {
+            return resp(res, '403', 'Only the Main Super Admin can register new staff.');
+        }
+
         const { name, email, mobile, password, role_id, role_type_id, uid, image_file, user_id } = req.body;
 
         const emailCheck = await validateUniqueLoginEmail(email);
@@ -181,6 +187,10 @@ router.post('/', async (req, res) => {
 // ── PUT /api/SuperAdmin/:id ──────────────────────────────────
 router.put('/:id', async (req, res) => {
     try {
+        if (!isMainSuperAdmin(req.user)) {
+            return resp(res, '403', 'Only the Main Super Admin can modify staff details.');
+        }
+
         const existing = await queryOne(
             `SELECT id, role_id FROM super_admin WHERE id = $1 AND deleted = false LIMIT 1`,
             [req.params.id]
@@ -221,6 +231,10 @@ router.put('/:id', async (req, res) => {
 // ── DELETE /api/SuperAdmin/:id ───────────────────────────────
 router.delete('/:id', async (req, res) => {
     try {
+        if (!isMainSuperAdmin(req.user)) {
+            return resp(res, '403', 'Only the Main Super Admin can delete staff.');
+        }
+
         const row = await queryOne(
             `UPDATE super_admin SET deleted = true, deleted_timestamp = NOW() WHERE id = $1 RETURNING *`,
             [req.params.id]

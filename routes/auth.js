@@ -56,12 +56,16 @@ async function resolveLabBranding(account) {
             tagline: account.user.tagline,
             logo_file: account.user.logo_file,
             report_header_file: account.user.report_header_file,
+            smtp_server: account.user.smtp_server,
+            smtp_port: account.user.smtp_port,
+            smtp_email: account.user.smtp_email,
+            smtp_password: account.user.smtp_password,
         };
     }
 
     if (account.table === 'corporate_clients' && account.user.b2b_client_id) {
         return queryOne(
-            `SELECT company_name, tagline, logo_file, report_header_file
+            `SELECT company_name, tagline, logo_file, report_header_file, smtp_server, smtp_port, smtp_email, smtp_password
              FROM b2b_clients WHERE id = $1 AND deleted = false LIMIT 1`,
             [account.user.b2b_client_id]
         );
@@ -69,7 +73,7 @@ async function resolveLabBranding(account) {
 
     if (account.table === 'admin_users' && account.user.user_id) {
         return queryOne(
-            `SELECT company_name, tagline, logo_file, report_header_file
+            `SELECT company_name, tagline, logo_file, report_header_file, smtp_server, smtp_port, smtp_email, smtp_password
              FROM b2b_clients WHERE id = $1 AND deleted = false LIMIT 1`,
             [account.user.user_id]
         );
@@ -132,7 +136,7 @@ router.post('/login', async (req, res) => {
                 let b2bBranding = null;
                 if (user.user_id) {
                     b2bBranding = await queryOne(
-                        `SELECT company_name, tagline, logo_file FROM b2b_clients WHERE id = $1 AND deleted = false LIMIT 1`,
+                        `SELECT company_name, tagline, logo_file, report_header_file, smtp_server, smtp_port, smtp_email, smtp_password FROM b2b_clients WHERE id = $1 AND deleted = false LIMIT 1`,
                         [user.user_id]
                     );
                 }

@@ -189,11 +189,15 @@ router.post('/', async (req, res) => {
 
         // ==== COMPLETE WALLET TRANSACTION ====
         if (resolvedB2bId && testPrice > 0) {
+            const labTestRow = await queryOne('SELECT name FROM lab_tests WHERE id = $1', [lab_test_id]);
+            const testName = labTestRow ? labTestRow.name : 'Unknown Test';
+            const description = `Test Report Deduction: ${testName}`;
+
             await query('UPDATE b2b_clients SET wallet_balance = $1 WHERE id = $2', [newBalance, resolvedB2bId]);
             await query(`
                 INSERT INTO b2b_wallet_transactions (b2b_client_id, transaction_type, amount, closing_balance, description, reference_id)
                 VALUES ($1, 'DEBIT', $2, $3, $4, $5)
-            `, [resolvedB2bId, testPrice, newBalance, 'Test Report Deduction', report.id]);
+            `, [resolvedB2bId, testPrice, newBalance, description, report.id]);
         }
         // =====================================
 

@@ -16,7 +16,7 @@ const { Storage } = require('@google-cloud/storage');
 const storage = new Storage();
 
 /** Set your bucket name here (or via GCS_BUCKET env). */
-const GCS_BUCKET_NAME = process.env.GCS_BUCKET || 'metrolab-uploads';
+const GCS_BUCKET_NAME = process.env.GCS_BUCKET || '';
 
 const PREFIX = {
     b2bClients: 'b2b-clients/',
