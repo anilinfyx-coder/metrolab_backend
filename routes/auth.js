@@ -50,6 +50,11 @@ async function findAccountByEmail(email) {
 async function resolveLabBranding(account) {
     if (!account?.user) return null;
 
+    if (account.table === 'super_admin') {
+        const { metroLabEmailLab } = require('../utils/emailBranding');
+        return metroLabEmailLab();
+    }
+
     if (account.table === 'b2b_clients') {
         return {
             company_name: account.user.company_name,

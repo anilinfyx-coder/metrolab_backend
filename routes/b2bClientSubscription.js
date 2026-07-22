@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { query, queryOne } = require('../db');
 const { sendSubscriptionPurchaseMail } = require('../utils/emailService');
-const { B2B_BRANDING_SELECT } = require('../utils/emailBranding');
+const { B2B_BRANDING_SELECT, metroLabEmailLab } = require('../utils/emailBranding');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
@@ -18,13 +18,14 @@ async function notifySubscriptionPurchase(b2bClientId, amount, startDate, endDat
     const lab = await fetchLabBranding(b2bClientId);
     if (!lab?.email) return;
 
+    // Subscriptions are managed from Super Admin — Metro Lab default logo
     sendSubscriptionPurchaseMail(
         lab.email,
         lab.company_name,
         amount,
         startDate,
         endDate,
-        lab
+        metroLabEmailLab()
     ).catch(err => console.error('Subscription Email error:', err));
 }
 

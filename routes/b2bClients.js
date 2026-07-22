@@ -6,6 +6,7 @@ const multer = require('multer');
 const { query, queryOne } = require('../db');
 const { JWT_SECRET, authMiddleware } = require('../middleware/auth');
 const { sendWelcomeB2BMail, sendWalletRechargeMail, verifySmtpCredentials } = require('../utils/emailService');
+const { metroLabEmailLab, resolveEmailLabForPortal } = require('../utils/emailBranding');
 const { validateUniqueLoginEmail, normalizeLoginEmail } = require('../utils/emailUniqueness');
 const { validateLoginUser } = require('../utils/loginAuth');
 const { uploadBuffer, getSignedUrl, generateFileName, PREFIX } = require('../utils/gcs');
@@ -301,7 +302,7 @@ router.post('/', uploadFields, async (req, res) => {
             delete labForEmail.smtp_email;
             delete labForEmail.smtp_password;
             
-            sendWelcomeB2BMail(row.email, row.company_name, password, labForEmail).catch(err => console.error('B2B Email error:', err));
+            sendWelcomeB2BMail(row.email, row.company_name, password, labForEmail, metroLabEmailLab()).catch(err => console.error('B2B Email error:', err));
         }
 
         return resp(res, '200', row);
@@ -450,7 +451,7 @@ router.post('/rechargeWallet', authMiddleware, async (req, res) => {
                 amount,
                 newBalance.toFixed(2),
                 description || 'Manual Recharge',
-                client
+                resolveEmailLabForPortal(req.user, client)
             ).catch(err => console.error('Wallet recharge email error:', err));
         }
 

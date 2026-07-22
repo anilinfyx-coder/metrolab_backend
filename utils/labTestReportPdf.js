@@ -10,9 +10,14 @@ const {
 } = require('./labTestDisplayOptions');
 const {
     resolveUploadedFilePath,
-    resolveLabLogoPath,
 } = require('./uploadedFiles');
 const { PREFIX } = require('./gcs');
+const {
+    resolveCertLabBranding,
+    resolveCertLogoPath,
+    drawCertBannerHeader,
+    labText,
+} = require('./certPdfCommon');
 
 function showFlag(labTest, flag) {
     return !!(labTest && labTest[flag]);
@@ -215,7 +220,7 @@ async function loadLabTestReportBundle(reportId) {
 }
 
 async function resolveReportLogoPath(b2b) {
-    return resolveLabLogoPath(b2b);
+    return resolveCertLogoPath(b2b);
 }
 
 function drawContactLine(doc, x, y, width, text) {
@@ -231,61 +236,40 @@ function drawLabelValue(doc, x, y, label, value, labelWidth = 130) {
 
 function drawReportHeader(doc, bundle) {
     const { report, b2b, labTest, logoPath } = bundle;
-    const left = 40;
-    const right = doc.page.width - 40;
+    const left = 44;
+    const right = doc.page.width - 44;
     const contentWidth = right - left;
-    const contactX = left + 270;
-    const contactWidth = contentWidth - 270;
 
-    let headerBottom = 40;
+    const company = labText(b2b?.company_name);
+    const address = labText(b2b?.address);
+    const phone = labText(b2b?.public_phone_no);
+    const fax = labText(b2b?.public_fax);
+    const email = labText(b2b?.public_email) || labText(b2b?.email);
+    const hasLabLogo = Boolean(logoPath);
 
-    if (logoPath) {
-        try {
-            doc.image(logoPath, left, 34, { fit: [170, 78] });
-            headerBottom = 34 + 78;
-        } catch (err) {
-            console.warn('Could not embed report logo:', err.message);
-            doc.font('Helvetica-Bold').fontSize(18).fillColor('#1a5f9e')
-                .text(b2b?.company_name || 'METRO LAB', left, 40, { width: 260 });
-            if (b2b?.tagline) {
-                doc.font('Helvetica').fontSize(8).fillColor('#555')
-                    .text(b2b.tagline, left, 62, { width: 260 });
-            }
-            headerBottom = 78;
-        }
-    } else {
-        doc.font('Helvetica-Bold').fontSize(18).fillColor('#1a5f9e')
-            .text(b2b?.company_name || 'METRO LAB', left, 40, { width: 260 });
-        if (b2b?.tagline) {
-            doc.font('Helvetica').fontSize(8).fillColor('#555')
-                .text(b2b.tagline, left, 62, { width: 260 });
-        }
-        headerBottom = 78;
-    }
+    let y = drawCertBannerHeader(doc, {
+        left,
+        right,
+        y: 32,
+        logoPath,
+        hasLabLogo,
+        company,
+        address,
+        phone,
+        fax,
+        email,
+    });
 
-    let cy = 38;
-    const fax = b2b?.public_fax || '';
-    const phone = b2b?.public_phone_no || '';
-    const email = b2b?.public_email || b2b?.email || '';
-    const address = b2b?.address || '';
-
-    if (fax) cy = drawContactLine(doc, contactX, cy, contactWidth, `FAX : ${fax}`);
-    if (phone) cy = drawContactLine(doc, contactX, cy, contactWidth, `Phone Number : ${phone}`);
-    if (email) cy = drawContactLine(doc, contactX, cy, contactWidth, `Email : ${email}`);
-    if (address) cy = drawContactLine(doc, contactX, cy, contactWidth, address);
-
-    let y = Math.max(headerBottom + 12, cy + 6);
-
-    doc.font('Helvetica-Bold').fontSize(14).fillColor('#111')
+    doc.font('Times-Bold').fontSize(16).fillColor('#111')
         .text(report.lab_test_name || 'Lab Test Report', left, y, { width: contentWidth, align: 'center' });
-    y += 22;
+    y += 26;
 
     doc.font('Helvetica-Bold').fontSize(9).fillColor('#222')
         .text(`Report Printed On: ${formatUsDateTime(new Date())}`, left, y, { width: contentWidth, align: 'right' });
-    y += 16;
+    y += 18;
 
     doc.moveTo(left, y).lineTo(right, y).strokeColor('#000').lineWidth(1).stroke();
-    y += 12;
+    y += 14;
 
     const mid = left + contentWidth / 2 + 10;
     let yL = y;
@@ -307,13 +291,26 @@ function drawReportHeader(doc, bundle) {
         yR = drawLabelValue(doc, mid, yR, 'Regulation:', report.regulation || '—');
     }
 
-    return Math.max(yL, yR) + 14;
+    return Math.max(yL, yR) + 16;
 }
 
 function drawBoldInlineField(doc, x, y, label, value, width = 500) {
     doc.font('Helvetica-Bold').fontSize(9).fillColor('#222').text(label, x, y, { width, continued: true });
     doc.font('Helvetica').fontSize(9).fillColor('#222').text(` ${value || '—'}`);
     return y + 16;
+}
+
+function drawDrugsTableHeader(doc, left, right, cols, y) {
+    const rowH = 16;
+    doc.font('Helvetica-Bold').fontSize(8).fillColor('#111');
+    let x = left + 4;
+    cols.forEach((c) => {
+        doc.text(c.title, x, y + 3, { width: c.w - 8 });
+        x += c.w;
+    });
+    y += rowH;
+    doc.moveTo(left, y).lineTo(right, y).strokeColor('#000').lineWidth(0.5).stroke();
+    return y;
 }
 
 function drawDrugsTestedSection(doc, bundle, startY) {
@@ -340,20 +337,16 @@ function drawDrugsTestedSection(doc, bundle, startY) {
         { title: 'Laboratory Confirmation Cutoff*', w: contentWidth - 185 - 70 - 138 },
     ];
     const rowH = 16;
+    // Only keep a small bottom margin so rows fill the page (MRO/footer paginate themselves).
+    const bottomLimit = () => doc.page.height - 48;
 
-    doc.font('Helvetica-Bold').fontSize(8).fillColor('#111');
-    let x = left + 4;
-    cols.forEach((c) => {
-        doc.text(c.title, x, y + 3, { width: c.w - 8 });
-        x += c.w;
-    });
-    y += rowH;
-    doc.moveTo(left, y).lineTo(right, y).strokeColor('#000').lineWidth(0.5).stroke();
+    y = drawDrugsTableHeader(doc, left, right, cols, y);
 
     parameters.forEach((p) => {
-        if (y > doc.page.height - 220) {
+        if (y + rowH > bottomLimit()) {
             doc.addPage();
             y = 40;
+            y = drawDrugsTableHeader(doc, left, right, cols, y);
         }
         const vals = [
             p.label || '—',
@@ -362,7 +355,7 @@ function drawDrugsTestedSection(doc, bundle, startY) {
             formatCutoff(p.confirmation_cutoff, p.unit_text),
         ];
         doc.font('Helvetica').fontSize(8).fillColor('#222');
-        x = left + 4;
+        let x = left + 4;
         vals.forEach((v, i) => {
             doc.text(String(v), x, y + 3, { width: cols[i].w - 8 });
             x += cols[i].w;
@@ -371,7 +364,7 @@ function drawDrugsTestedSection(doc, bundle, startY) {
         doc.moveTo(left, y).lineTo(right, y).strokeColor('#000').lineWidth(0.5).stroke();
     });
 
-    return y + 18;
+    return y + 12;
 }
 
 function drawMroSection(doc, bundle, startY) {
@@ -389,9 +382,10 @@ function drawMroSection(doc, bundle, startY) {
 
     if (mroFields.length === 0) return startY;
 
-    let y = startY + 16;
-
-    if (y > doc.page.height - 220) {
+    let y = startY + 12;
+    // Title + intro + fields + spacing — only break if this block won't fit.
+    const mroNeeded = 22 + 34 + (mroFields.length * 16) + 24;
+    if (y + mroNeeded > doc.page.height - 48) {
         doc.addPage();
         y = 40;
     }
@@ -413,7 +407,7 @@ function drawMroSection(doc, bundle, startY) {
         y = drawBoldInlineField(doc, left, y, f.label, f.value || '—', contentWidth);
     });
 
-    return y + 20;
+    return y + 16;
 }
 
 function drawAdditionalDetailsSection(doc, bundle, startY) {
@@ -440,7 +434,8 @@ function drawAdditionalDetailsSection(doc, bundle, startY) {
     if (rows.length === 0) return startY;
 
     let y = startY + 8;
-    if (y > doc.page.height - 180) {
+    const detailsNeeded = 18 + Math.ceil(rows.length / 2) * 16 + 12;
+    if (y + detailsNeeded > doc.page.height - 48) {
         doc.addPage();
         y = 40;
     }
@@ -467,8 +462,8 @@ function drawReportFooter(doc, bundle, startY) {
     const right = doc.page.width - 40;
     const contentWidth = right - left;
     let y = startY + 10;
-
-    if (y > doc.page.height - 130) {
+    const footerNeeded = 18 + 34 + 22 + 14 + 14;
+    if (y + footerNeeded > doc.page.height - 40) {
         doc.addPage();
         y = 40;
     }
@@ -611,12 +606,18 @@ async function generatePlainLabTestReportPdf(bundle) {
  * Build report PDF buffer. If patient has DOB, PDF is password-protected with MMDD.
  * @returns {{ buffer: Buffer, filename: string, password: string|null, report: object }}
  */
-async function buildLabTestReportPdf(reportId, { encrypt = true } = {}) {
+async function buildLabTestReportPdf(reportId, { encrypt = true, authUser } = {}) {
     const bundle = await loadLabTestReportBundle(reportId);
     if (!bundle) {
         const err = new Error('Report not found');
         err.code = '404';
         throw err;
+    }
+
+    const patientB2b = bundle.b2bClientId || bundle.report.patient_b2b_client_id;
+    const brandingLab = await resolveCertLabBranding(authUser, patientB2b);
+    if (brandingLab) {
+        bundle.b2b = brandingLab;
     }
 
     const plain = await generatePlainLabTestReportPdf(bundle);
@@ -634,6 +635,7 @@ async function buildLabTestReportPdf(reportId, { encrypt = true } = {}) {
         password: encrypt ? password : null,
         report: bundle.report,
         b2b: bundle.b2b,
+        lab: bundle.b2b,
     };
 }
 

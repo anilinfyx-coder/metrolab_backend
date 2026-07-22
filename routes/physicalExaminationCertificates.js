@@ -168,11 +168,11 @@ router.delete('/:id', async (req, res) => {
 // Download + email share the SAME builder (layout, lab branding, logo/signature).
 router.post('/downloadPhysicalExaminationCertificate', async (req, res) => {
     try {
-        const { buildPhysicalExamCertPdf } = require('../utils/physicalExamCertPdf');
+        const { buildPhysicalExamCertForDelivery } = require('../utils/certPdfDelivery');
         const { id } = req.body;
         if (!id) return resp(res, '400', 'Certificate id is required');
 
-        const pdf = await buildPhysicalExamCertPdf(id, { encrypt: false, authUser: req.user });
+        const pdf = await buildPhysicalExamCertForDelivery(id, req.user);
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename=${pdf.filename}`);
         return res.send(pdf.buffer);
@@ -184,12 +184,12 @@ router.post('/downloadPhysicalExaminationCertificate', async (req, res) => {
 
 router.post('/emailPhysicalExaminationCertificate', async (req, res) => {
     try {
-        const { buildPhysicalExamCertPdf } = require('../utils/physicalExamCertPdf');
+        const { buildPhysicalExamCertForDelivery } = require('../utils/certPdfDelivery');
         const { sendCertificateMail } = require('../utils/emailService');
         const { id } = req.body;
         if (!id) return resp(res, '400', 'Certificate id is required');
 
-        const pdf = await buildPhysicalExamCertPdf(id, { encrypt: false, authUser: req.user });
+        const pdf = await buildPhysicalExamCertForDelivery(id, req.user);
         const to = (pdf.cert.patient_email || '').trim();
         if (!to) return resp(res, '400', 'No email address found for this patient');
 
