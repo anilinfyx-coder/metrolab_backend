@@ -3,6 +3,7 @@ const router = express.Router();
 const { pool, query, queryOne } = require('../db');
 const { authMiddleware } = require('../middleware/auth');
 const { crudRoutes } = require('./crud');
+const { decryptPII } = require('../utils/cryptoUtils');
 const { respondListQuery } = require('../utils/pagination');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
@@ -14,12 +15,12 @@ router.get('/', async (req, res) => {
     try {
         let whereClause = "ahc.deleted = false";
         const values = [];
-        
+
         if (req.query.patient_id) {
             values.push(req.query.patient_id);
             whereClause += ` AND ahc.patient_id = $${values.length}`;
         }
-        
+
         const { resolveAdminContext } = require('../utils/adminContext');
         if (req.user && req.user.portal === 'b2b') {
             values.push(req.user.id);
@@ -65,10 +66,14 @@ router.get('/', async (req, res) => {
             params: values,
             orderBy: 'ORDER BY ahc.creation_timestamp DESC',
             defaultLimit: 25,
+            mapRow: (row) => {
+                if (row.dob) row.dob = decryptPII(row.dob);
+                return row;
+            }
         });
     } catch (err) {
-        return resp(res, '500', err.message);
-    }
+    return resp(res, '500', err.message);
+}
 });
 
 router.get('/:id', async (req, res) => {
@@ -87,8 +92,9 @@ router.get('/:id', async (req, res) => {
             LEFT JOIN b2b_clients b2b ON p.b2b_client_id = b2b.id
             WHERE ahc.id = $1 AND ahc.deleted = false
         `, [req.params.id]);
-        
+
         if (!row) return resp(res, '404', 'Not found');
+        if (row.dob) row.dob = decryptPII(row.dob);
         return resp(res, '200', row);
     } catch (err) {
         return resp(res, '500', err.message);
@@ -130,7 +136,7 @@ router.put('/:id', async (req, res) => {
     try {
         const id = req.params.id;
         const body = req.body;
-        
+
         let updates = [];
         let values = [];
         let idx = 1;
@@ -149,13 +155,14 @@ router.put('/:id', async (req, res) => {
                 idx++;
             }
         }
-        
+
         if (updates.length === 0) return resp(res, '400', 'No fields to update');
-        
+
         values.push(id);
         const q = `UPDATE adult_health_certificates SET ${updates.join(', ')} WHERE id = $${idx} RETURNING *`;
         const row = await queryOne(q, values);
         if (!row) return resp(res, '404', 'Not found');
+        if (row.dob) row.dob = decryptPII(row.dob);
         return resp(res, '200', row);
     } catch (err) {
         return resp(res, '500', err.message);

@@ -5,6 +5,7 @@ const PDFDocument = require('pdfkit');
 const muhammara = require('muhammara');
 const { queryOne } = require('../db');
 const { resolveCertLabBranding, resolveCertLogoPath, drawCertBannerHeader, drawCheckbox, drawUnderlineField, labText, CHECKBOX_SIZE } = require('./certPdfCommon');
+const { decryptPII } = require('./cryptoUtils');
 
 function pad(n) {
     return String(n).padStart(2, '0');
@@ -117,11 +118,7 @@ async function resolveLoggedInLab(authUser) {
     );
 }
 
-async function resolveCertLogoPath(lab) {
-    const labLogo = await resolveUploadedFilePath(lab?.logo_file, { prefix: PREFIX.b2bClients });
-    if (labLogo) return labLogo;
-    return resolveLabLogoPath(lab);
-}
+
 
 function isMale(sex) {
     return sex === 1 || sex === '1' || String(sex || '').toLowerCase() === 'male';
@@ -132,52 +129,55 @@ function isFemale(sex) {
 }
 
 function drawDigitalAuthBlock(doc, { left, pageW, y, clinicianName, specialty, examDate, clinicianAddress }) {
-    const headerH = 26;
-    const bodyH = 66;
-    const noteH = 28;
-    const boxH = headerH + bodyH + noteH;
+    doc.save();
+    const rowH = 24;
 
-    doc.roundedRect(left, y, pageW, boxH, 3)
-        .lineWidth(1.2).strokeColor('#1e40af').stroke();
+    let currentY = y;
+    doc.font('Times-Roman').fontSize(11).fillColor('#111');
+    doc.text('Name/Signature of examining Clinician:', left, currentY + 2, { lineBreak: false });
+    const label1W = doc.widthOfString('Name/Signature of examining Clinician:') + 8;
+    const nameLineW = 200;
+    const nameX = left + label1W;
+    
+    doc.moveTo(nameX, currentY + 14).lineTo(nameX + nameLineW, currentY + 14).strokeColor('#111').lineWidth(0.8).stroke();
+    if (clinicianName) {
+        doc.font('Helvetica-Bold').fontSize(11).fillColor('#111');
+        doc.text(String(clinicianName), nameX, currentY + 1, { width: nameLineW, align: 'center', lineBreak: false });
+    }
+    
+    const specX = nameX + nameLineW + 8;
+    doc.font('Times-Roman').fontSize(11).fillColor('#111');
+    doc.text(specialty ? String(specialty) : 'MD/PA/NP', specX, currentY + 2, { lineBreak: false });
+    currentY += rowH;
 
-    doc.rect(left, y, pageW, headerH).fill('#eff6ff');
-    doc.font('Helvetica-Bold').fontSize(8).fillColor('#1e40af')
-        .text('ELECTRONICALLY AUTHENTICATED CERTIFICATE', left, y + 8, { width: pageW, align: 'center' });
+    doc.font('Times-Roman').fontSize(11).fillColor('#111');
+    doc.text('Date of examination:', left, currentY + 2, { lineBreak: false });
+    const label2W = doc.widthOfString('Date of examination:') + 8;
+    const dateLineW = 160;
+    const dateX = left + label2W;
+    
+    doc.moveTo(dateX, currentY + 14).lineTo(dateX + dateLineW, currentY + 14).strokeColor('#111').lineWidth(0.8).stroke();
+    if (examDate) {
+        doc.font('Helvetica-Bold').fontSize(11).fillColor('#111');
+        doc.text(formatUsDate(examDate), dateX, currentY + 1, { width: dateLineW, align: 'center', lineBreak: false });
+    }
+    currentY += rowH;
 
-    const innerY = y + headerH + 14;
-    const colW = pageW / 2;
+    doc.font('Times-Roman').fontSize(11).fillColor('#111');
+    doc.text('Address:', left, currentY + 2, { lineBreak: false });
+    const label3W = doc.widthOfString('Address:') + 8;
+    const addrLineW = 340;
+    const addrX = left + label3W;
+    
+    doc.moveTo(addrX, currentY + 14).lineTo(addrX + addrLineW, currentY + 14).strokeColor('#111').lineWidth(0.8).stroke();
+    if (clinicianAddress) {
+        doc.font('Helvetica-Bold').fontSize(11).fillColor('#111');
+        doc.text(String(clinicianAddress), addrX, currentY + 1, { width: addrLineW, align: 'center', lineBreak: false, ellipsis: true });
+    }
+    currentY += rowH;
 
-    doc.font('Helvetica').fontSize(7.5).fillColor('#555')
-        .text('Digitally Signed By', left + 14, innerY);
-    doc.font('Helvetica-Bold').fontSize(10).fillColor('#111')
-        .text(clinicianName ? String(clinicianName) : '-', left + 14, innerY + 12, { width: colW - 20 });
-    doc.font('Helvetica').fontSize(8.5).fillColor('#333')
-        .text(specialty ? String(specialty) : 'MD / PA / NP', left + 14, innerY + 28);
-
-    doc.font('Helvetica').fontSize(7.5).fillColor('#555')
-        .text('Date of Examination', left + colW + 14, innerY);
-    doc.font('Helvetica-Bold').fontSize(10).fillColor('#111')
-        .text(formatUsDate(examDate) || '-', left + colW + 14, innerY + 12);
-
-    doc.font('Helvetica').fontSize(7.5).fillColor('#555')
-        .text('Clinician Address', left + colW + 14, innerY + 28);
-    doc.font('Helvetica').fontSize(8.5).fillColor('#111')
-        .text(clinicianAddress ? String(clinicianAddress) : '-', left + colW + 14, innerY + 40, {
-            width: colW - 20,
-            lineBreak: false,
-            ellipsis: true,
-        });
-
-    const noteY = y + headerH + bodyH;
-    doc.moveTo(left, noteY).lineTo(left + pageW, noteY)
-        .strokeColor('#dbeafe').lineWidth(0.6).stroke();
-    doc.font('Helvetica-Oblique').fontSize(7.5).fillColor('#666')
-        .text('This document is electronically authenticated. No physical signature is required.', left, noteY + 9, {
-            width: pageW,
-            align: 'center',
-        });
-
-    return y + boxH + 8;
+    doc.restore();
+    return currentY + 16;
 }
 
 async function buildAdultHealthCertPdf(id, options = {}) {
@@ -193,6 +193,7 @@ async function buildAdultHealthCertPdf(id, options = {}) {
     );
 
     if (!cert) throw new Error('Certificate not found');
+    if (cert.patient_dob) cert.patient_dob = decryptPII(cert.patient_dob);
 
     // Logged-in lab branding (admin staff → b2b via user_id, or b2b portal).
     const lab = await resolveLoggedInLab(options.authUser, cert.b2b_client_id);

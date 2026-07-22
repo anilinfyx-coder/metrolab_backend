@@ -13,6 +13,9 @@ const {
     labText,
     CHECKBOX_SIZE,
 } = require('./certPdfCommon');
+const { decryptPII } = require('./cryptoUtils');
+
+const AUTH_H = 88;
 
 function pad(n) {
     return String(n).padStart(2, '0');
@@ -113,11 +116,7 @@ async function resolveLoggedInLab(authUser) {
     );
 }
 
-async function resolveCertLogoPath(lab) {
-    const labLogo = await resolveUploadedFilePath(lab?.logo_file, { prefix: PREFIX.b2bClients });
-    if (labLogo) return labLogo;
-    return resolveLabLogoPath(lab);
-}
+
 
 function sexLabel(sex) {
     if (sex === 1 || sex === '1' || String(sex || '').toLowerCase() === 'male') return 'Male';
@@ -166,71 +165,56 @@ function field(doc, label, value, x, y, labelW, fieldW, gapAfter = 12) {
     return x + labelW + fieldW + gapAfter;
 }
 
-const AUTH_H = 118;
-
 function drawDigitalAuthBlock(doc, { left, pageW, y, clinicianName, specialty, examDate, clinicianAddress }) {
-    const headerH = 26;
-    const noteH = 28;
-    const bodyH = AUTH_H - headerH - noteH;
-
     doc.save();
-    doc.lineWidth(1.3).strokeColor('#1e40af');
-    doc.roundedRect(left, y, pageW, AUTH_H, 4).stroke();
+    const rowH = 24;
 
-    doc.rect(left, y, pageW, headerH).fill('#eff6ff');
-    doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#1e40af')
-        .text('ELECTRONICALLY AUTHENTICATED CERTIFICATE', left, y + 8, {
-            width: pageW,
-            align: 'center',
-            lineBreak: false,
-        });
+    let currentY = y;
+    doc.font('Times-Roman').fontSize(11).fillColor('#111');
+    doc.text('Name/Signature of examining Clinician:', left, currentY + 2, { lineBreak: false });
+    const label1W = doc.widthOfString('Name/Signature of examining Clinician:') + 8;
+    const nameLineW = 200;
+    const nameX = left + label1W;
+    
+    doc.moveTo(nameX, currentY + 14).lineTo(nameX + nameLineW, currentY + 14).strokeColor('#111').lineWidth(0.8).stroke();
+    if (clinicianName) {
+        doc.font('Helvetica-Bold').fontSize(11).fillColor('#111');
+        doc.text(String(clinicianName), nameX, currentY + 1, { width: nameLineW, align: 'center', lineBreak: false });
+    }
+    
+    const specX = nameX + nameLineW + 8;
+    doc.font('Times-Roman').fontSize(11).fillColor('#111');
+    doc.text(specialty ? String(specialty) : 'MD/PA/NP', specX, currentY + 2, { lineBreak: false });
+    currentY += rowH;
 
-    const padX = 16;
-    const colW = (pageW - padX * 2 - 20) / 2;
-    const leftCol = left + padX;
-    const rightCol = left + padX + colW + 20;
-    let iy = y + headerH + 12;
+    doc.font('Times-Roman').fontSize(11).fillColor('#111');
+    doc.text('Date of examination:', left, currentY + 2, { lineBreak: false });
+    const label2W = doc.widthOfString('Date of examination:') + 8;
+    const dateLineW = 160;
+    const dateX = left + label2W;
+    
+    doc.moveTo(dateX, currentY + 14).lineTo(dateX + dateLineW, currentY + 14).strokeColor('#111').lineWidth(0.8).stroke();
+    if (examDate) {
+        doc.font('Helvetica-Bold').fontSize(11).fillColor('#111');
+        doc.text(formatUsDate(examDate), dateX, currentY + 1, { width: dateLineW, align: 'center', lineBreak: false });
+    }
+    currentY += rowH;
 
-    doc.font('Helvetica').fontSize(8).fillColor('#64748b')
-        .text('Digitally Signed By', leftCol, iy, { lineBreak: false });
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#0f172a')
-        .text(clinicianName ? String(clinicianName) : '—', leftCol, iy + 12, {
-            width: colW,
-            lineBreak: false,
-            ellipsis: true,
-        });
-    doc.font('Helvetica').fontSize(9).fillColor('#334155')
-        .text(specialty ? String(specialty) : 'MD / PA / NP', leftCol, iy + 28, {
-            width: colW,
-            lineBreak: false,
-        });
+    doc.font('Times-Roman').fontSize(11).fillColor('#111');
+    doc.text('Address:', left, currentY + 2, { lineBreak: false });
+    const label3W = doc.widthOfString('Address:') + 8;
+    const addrLineW = 340;
+    const addrX = left + label3W;
+    
+    doc.moveTo(addrX, currentY + 14).lineTo(addrX + addrLineW, currentY + 14).strokeColor('#111').lineWidth(0.8).stroke();
+    if (clinicianAddress) {
+        doc.font('Helvetica-Bold').fontSize(11).fillColor('#111');
+        doc.text(String(clinicianAddress), addrX, currentY + 1, { width: addrLineW, align: 'center', lineBreak: false, ellipsis: true });
+    }
+    currentY += rowH;
 
-    doc.font('Helvetica').fontSize(8).fillColor('#64748b')
-        .text('Date of Examination', rightCol, iy, { lineBreak: false });
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#0f172a')
-        .text(formatUsDate(examDate) || '—', rightCol, iy + 12, { lineBreak: false });
-
-    doc.font('Helvetica').fontSize(8).fillColor('#64748b')
-        .text('Clinician Address', rightCol, iy + 28, { lineBreak: false });
-    doc.font('Helvetica').fontSize(9).fillColor('#334155')
-        .text(clinicianAddress ? String(clinicianAddress) : '—', rightCol, iy + 40, {
-            width: colW,
-            height: 18,
-            lineBreak: false,
-            ellipsis: true,
-        });
-
-    const noteY = y + headerH + bodyH;
-    doc.moveTo(left, noteY).lineTo(left + pageW, noteY)
-        .strokeColor('#bfdbfe').lineWidth(0.8).stroke();
-    doc.font('Helvetica-Oblique').fontSize(8).fillColor('#64748b')
-        .text('This document is electronically authenticated. No physical signature is required.', left, noteY + 9, {
-            width: pageW,
-            align: 'center',
-            lineBreak: false,
-        });
     doc.restore();
-    return y + AUTH_H;
+    return currentY + 16;
 }
 
 async function buildPhysicalExamCertPdf(id, options = {}) {
@@ -246,6 +230,7 @@ async function buildPhysicalExamCertPdf(id, options = {}) {
     );
 
     if (!cert) throw new Error('Certificate not found');
+    if (cert.patient_dob) cert.patient_dob = decryptPII(cert.patient_dob);
 
     const lab = await resolveLoggedInLab(options.authUser, cert.b2b_client_id);
     const logoPath = await resolveCertLogoPath(lab);
@@ -326,125 +311,113 @@ async function buildPhysicalExamCertPdf(id, options = {}) {
                 });
             y += 26;
 
-            // —— Patient block (uniform row height) ——
+            // —— Patient block ——
             const rowH = 26;
             const labelSize = 10.5;
 
-            // Name / Age / Sex
+            // Row 1: Name, DOB, Tel #
             let x = left;
-            x = field(doc, 'Name:', cert.patient_name, x, y, 40, 248, 14);
-            x = field(doc, 'Age:', cert.age, x, y, 30, 46, 14);
-            field(doc, 'Sex:', sexLabel(cert.sex), x, y, 30, 72, 0);
+            x = field(doc, 'Name:', cert.patient_name, x, y, 40, 220, 16);
+            x = field(doc, 'DOB:', formatUsDate(cert.patient_dob), x, y, 32, 70, 16);
+            field(doc, 'Tel #:', cert.tel, x, y, 32, 100, 0);
             y += rowH;
 
-            // Address / Tel
+            // Row 2: Address
             x = left;
-            x = field(doc, 'Address:', fullAddress, x, y, 54, 318, 14);
-            field(doc, 'Tel #:', cert.tel, x, y, 38, 98, 0);
+            field(doc, 'Address:', fullAddress, x, y, 50, 464, 0);
             y += rowH;
 
-            // Height / Weight / B.P / Pulse — equal gaps
-            const vitals = [
-                { label: 'Height:', value: cert.height, lw: 46, fw: 58 },
-                { label: 'Weight:', value: cert.weight, lw: 50, fw: 58 },
-                { label: 'B.P:', value: cert.bp, lw: 30, fw: 72 },
-                { label: 'Pulse:', value: cert.pulse, lw: 40, fw: 78 },
-            ];
+            // Row 3: Sex, Age, Height, Weight
             x = left;
-            vitals.forEach((v, i) => {
-                const gap = i === vitals.length - 1 ? 0 : 16;
-                x = field(doc, v.label, v.value, x, y, v.lw, v.fw, gap);
-            });
-            y += rowH;
+            x = field(doc, 'Sex:', sexLabel(cert.sex), x, y, 26, 60, 16);
+            x = field(doc, 'Age:', cert.age, x, y, 28, 50, 16);
+            x = field(doc, 'Height:', cert.height, x, y, 38, 60, 16);
+            field(doc, 'Weight:', cert.weight, x, y, 42, 60, 0);
+            y += rowH + 8;
 
-            // Hearing / Vision
+            // Evaluation Key
+            doc.font('Times-Bold').fontSize(11).fillColor('#111')
+                .text('EVALUATED with corresponding letter', left + 12, y);
+            y += 14;
+            doc.text('NORMAL = N', left + 12, y, { lineBreak: false });
+            doc.text('ABNORMAL = AB', left + 140, y);
+            y += 24;
+
+            // Vitals
             x = left;
-            x = field(doc, 'Hearing: Right', cert.hearing_right, x, y, 84, 72, 10);
-            x = field(doc, 'Left', cert.hearing_left, x, y, 30, 72, 18);
-            x = field(doc, 'Vision: Right', cert.vision_right, x, y, 74, 64, 10);
-            field(doc, 'Left', cert.vision_left, x, y, 30, 64, 0);
+            x = field(doc, 'Blood pressure: -', cert.bp, x, y, 92, 180, 20);
+            field(doc, 'Pulse: -', cert.pulse, x, y, 42, 150, 0);
             y += rowH;
 
-            // Wear Glasses
-            drawLabel(doc, 'Wear Glasses:', left, y, labelSize);
-            const gX = left + 90;
-            drawCheckbox(doc, gX, y + 2, !!cert.wear_glasses);
-            drawLabel(doc, 'Yes', gX + CHECKBOX_SIZE + 6, y, labelSize);
-            drawCheckbox(doc, gX + 52, y + 2, !cert.wear_glasses);
-            drawLabel(doc, 'No', gX + 52 + CHECKBOX_SIZE + 6, y, labelSize);
-            y += rowH + 4;
+            x = left;
+            x = field(doc, 'Hearing: Right:', cert.hearing_right, x, y, 80, 140, 20);
+            field(doc, 'Left:', cert.hearing_left, x, y, 28, 140, 0);
+            y += rowH;
 
-            // —— Clinical evaluation (3-column grid) ——
-            const labelColW = pageW - 170;
-            const normalColW = 80;
-            const abnormalColW = 90;
-            const normalX = left + labelColW;
-            const abnormalX = normalX + normalColW;
+            x = left;
+            x = field(doc, 'Vision: Right 20 /', cert.vision_right, x, y, 96, 76, 16);
+            x = field(doc, 'Left 20 /', cert.vision_left, x, y, 50, 76, 20);
+            
+            drawLabel(doc, 'Wear glasses:', x, y, labelSize);
+            x += 74;
+            drawCheckbox(doc, x, y + 2, !!cert.wear_glasses);
+            drawLabel(doc, 'Yes', x + CHECKBOX_SIZE + 4, y, labelSize);
+            x += CHECKBOX_SIZE + 32;
+            drawCheckbox(doc, x, y + 2, !cert.wear_glasses && cert.wear_glasses !== null);
+            drawLabel(doc, 'No', x + CHECKBOX_SIZE + 4, y, labelSize);
+            y += rowH + 12;
 
-            doc.font('Times-Bold').fontSize(11).fillColor('#111');
-            doc.text('CLINICAL EVALUATION', left, y, { width: labelColW - 8, lineBreak: false });
-            doc.text('NORMAL', normalX, y, { width: normalColW, align: 'center', lineBreak: false });
-            doc.text('ABNORMAL', abnormalX, y, { width: abnormalColW, align: 'center', lineBreak: false });
-            y += 18;
-
+            // —— List of Eval Items ——
             const items = [
-                { id: '1.', label: 'Head & Neck', field: cert.eval_head },
-                { id: '2.', label: 'Nose & Sinus', field: cert.eval_nose },
-                { id: '3.', label: 'Mouth & Throat', field: cert.eval_mouth },
+                { id: '1.', label: 'Head, Neck, Face & Scalp', field: cert.eval_head },
+                { id: '2.', label: 'Nose and Sinuses', field: cert.eval_nose },
+                { id: '3.', label: 'Mouth and Throat', field: cert.eval_mouth },
                 { id: '4.', label: 'Ears', field: cert.eval_ears },
-                { id: '5.', label: 'Eyes', field: cert.eval_eyes },
-                { id: '6.', label: 'Lungs & Chest', field: cert.eval_lungs },
+                { id: '5.', label: 'Eyes, Pupils and Ocular Motion', field: cert.eval_eyes },
+                { id: '6.', label: 'Lungs, Chest, and Breasts', field: cert.eval_lungs },
                 { id: '7.', label: 'Heart', field: cert.eval_heart },
                 { id: '8.', label: 'Vascular System', field: cert.eval_vascular },
-                { id: '9.', label: 'Abdomen', field: cert.eval_abdomen },
-                { id: '10.', label: 'Spine', field: cert.eval_spine },
-                { id: '11.', label: 'Skin', field: cert.eval_skin },
+                { id: '9.', label: 'Abdomen and Viscera', field: cert.eval_abdomen },
+                { id: '10.', label: 'Spine, other Muscular Skeletal System', field: cert.eval_spine },
+                { id: '11.', label: 'Skin and Lymphatic', field: cert.eval_skin },
                 { id: '12.', label: 'Neurologic', field: cert.eval_neurologic },
             ];
 
-            // Fill remaining page so auth sits near bottom without a huge empty band mid-page.
-            const afterEvalFixed = 12 + 16 + 20 + 22 + 14 + AUTH_H; // comments + overall + gaps + auth
-            const spaceForRows = Math.max(items.length * 16, pageBottom - y - afterEvalFixed);
-            const evalRowH = Math.min(20, Math.max(16, spaceForRows / items.length));
-            const markSize = 12;
-
+            const evalRowH = 18;
             items.forEach((item) => {
                 doc.font('Times-Roman').fontSize(11).fillColor('#111');
-                doc.text(item.id, left, y + 1, { width: 28, lineBreak: false });
-                doc.text(item.label, left + 30, y + 1, { width: labelColW - 40, lineBreak: false });
-
-                if (isEvalNormal(item.field)) {
-                    drawCheckMark(doc, normalX + (normalColW - markSize) / 2, y + 1, markSize);
-                }
-                if (isEvalAbnormal(item.field)) {
-                    drawCheckMark(doc, abnormalX + (abnormalColW - markSize) / 2, y + 1, markSize);
-                }
+                doc.text(`${item.id} ${item.label}`, left + 20, y + 2, { width: 220, lineBreak: false });
+                
+                let valStr = '';
+                if (isEvalNormal(item.field)) valStr = 'N';
+                else if (isEvalAbnormal(item.field)) valStr = 'AB';
+                else valStr = item.field || '';
+                
+                drawField(doc, left + 240, y, 160, valStr, 11);
                 y += evalRowH;
             });
 
             y += 10;
 
-            // 13. Additional comments — label, then value on the next line (tight)
+            // 13. Additional comments
             doc.font('Times-Roman').fontSize(11).fillColor('#111');
-            doc.text('13.', left, y, { width: 28, lineBreak: false });
-            doc.text('Additional Comment, Past medical history, current medications:', left + 30, y, {
-                width: pageW - 30,
-                lineBreak: false,
-            });
+            doc.text('13. Additional Comment, Past medical history, current medications:', left + 20, y);
             y += 16;
-            drawField(doc, left + 30, y, pageW - 30, cert.additional_comments, 10);
-            y += 24;
+            drawField(doc, left + 20, y, pageW - 20, cert.additional_comments, 11);
+            y += 32;
 
             // 14. Overall condition
             doc.font('Times-Roman').fontSize(11).fillColor('#111');
-            doc.text('14.', left, y, { width: 28, lineBreak: false });
-            doc.text('Overall Physical Condition', left + 30, y, { lineBreak: false });
-            const oX = left + 220;
-            drawCheckbox(doc, oX, y + 1, cert.overall_condition === 'Fit');
-            doc.text('Fit', oX + CHECKBOX_SIZE + 6, y, { lineBreak: false });
-            drawCheckbox(doc, oX + 56, y + 1, cert.overall_condition === 'Unfit');
-            doc.text('Unfit', oX + 56 + CHECKBOX_SIZE + 6, y, { lineBreak: false });
-            y += 24;
+            doc.text('14. Overall Physical Condition', left + 20, y + 2, { lineBreak: false });
+            
+            let oX = left + 220;
+            doc.text('Fit', oX, y + 2, { lineBreak: false });
+            drawField(doc, oX + 22, y, 70, cert.overall_condition === 'Fit' ? '✔' : '');
+            
+            oX += 120;
+            doc.text('Unfit', oX, y + 2, { lineBreak: false });
+            drawField(doc, oX + 34, y, 70, cert.overall_condition === 'Unfit' ? '✔' : '');
+            y += 32;
 
             // Auth footer — just below content; nudge down only if a little leftover room
             let authY = y + 10;
