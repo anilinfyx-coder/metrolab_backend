@@ -145,7 +145,7 @@ async function loadLabTestReportBundle(reportId) {
         `SELECT r.*,
                 p.name as patient_name,
                 p.uid as patient_uid,
-                p.email as patient_email,
+                p.email as patient_email, custom_domain,
                 p.mobile as patient_mobile,
                 p.dob::text as patient_dob,
                 p.gender as patient_gender,
@@ -194,7 +194,7 @@ async function loadLabTestReportBundle(reportId) {
 
     const b2b = b2bClientId
         ? await queryOne(
-            `SELECT company_name, tagline, public_phone_no, public_fax, public_email, email,
+            `SELECT company_name, tagline, public_phone_no, public_fax, public_email, custom_domain, email,
                     address, medical_officer_name, mrocc, clia_number,
                     medical_officer_signature_file_name, logo_file, report_header_file
              FROM b2b_clients WHERE id = $1 LIMIT 1`,
@@ -333,7 +333,7 @@ function drawReportHeader(doc, bundle) {
         address,
         phone,
         fax,
-        email,
+        email, custom_domain,
     });
 
     doc.font('Times-Bold').fontSize(16).fillColor('#111')

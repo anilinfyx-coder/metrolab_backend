@@ -70,7 +70,7 @@ async function resolveLabBranding(account) {
 
     if (account.table === 'corporate_clients' && account.user.b2b_client_id) {
         return queryOne(
-            `SELECT company_name, tagline, logo_file, report_header_file, smtp_server, smtp_port, smtp_email, smtp_password
+            `SELECT company_name, tagline, logo_file, report_header_file, smtp_server, smtp_port, smtp_email, smtp_password, custom_domain
              FROM b2b_clients WHERE id = $1 AND deleted = false LIMIT 1`,
             [account.user.b2b_client_id]
         );
@@ -78,7 +78,7 @@ async function resolveLabBranding(account) {
 
     if (account.table === 'admin_users' && account.user.user_id) {
         return queryOne(
-            `SELECT company_name, tagline, logo_file, report_header_file, smtp_server, smtp_port, smtp_email, smtp_password
+            `SELECT company_name, tagline, logo_file, report_header_file, smtp_server, smtp_port, smtp_email, smtp_password, custom_domain
              FROM b2b_clients WHERE id = $1 AND deleted = false LIMIT 1`,
             [account.user.user_id]
         );
@@ -141,7 +141,7 @@ router.post('/login', async (req, res) => {
                 let b2bBranding = null;
                 if (user.user_id) {
                     b2bBranding = await queryOne(
-                        `SELECT company_name, tagline, logo_file, report_header_file, smtp_server, smtp_port, smtp_email, smtp_password FROM b2b_clients WHERE id = $1 AND deleted = false LIMIT 1`,
+                        `SELECT company_name, tagline, logo_file, report_header_file, smtp_server, smtp_port, smtp_email, smtp_password, custom_domain FROM b2b_clients WHERE id = $1 AND deleted = false LIMIT 1`,
                         [user.user_id]
                     );
                 }
@@ -238,10 +238,10 @@ router.post('/forgot-password', async (req, res) => {
             [email, account.table, account.user.id, tokenHash, expiresAt]
         );
 
-        const resetUrl = `${getFrontendBaseUrl()}/reset-password/${encodeURIComponent(rawToken)}`;
-
         const displayName = pickDisplayName(account.user, account.nameFields);
         const lab = await resolveLabBranding(account);
+
+        const resetUrl = `${getFrontendBaseUrl(lab?.custom_domain)}/reset-password/${encodeURIComponent(rawToken)}`;
 
         const sent = await sendPasswordResetMail(email, displayName, resetUrl, lab);
         if (!sent) {

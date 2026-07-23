@@ -65,6 +65,43 @@ router.get('/file/:filename', async (req, res) => {
     }
 });
 
+// ── GET /api/B2bClients/whitelabelConfig ────────────────────────
+router.get('/whitelabelConfig', async (req, res) => {
+    try {
+        const { domain } = req.query;
+        if (!domain) return resp(res, '400', 'Domain is required');
+
+        const client = await queryOne(
+            `SELECT id, company_name, logo_file, primary_color_code, custom_domain 
+             FROM b2b_clients 
+             WHERE custom_domain = $1 AND deleted = false LIMIT 1`,
+            [domain]
+        );
+        if (!client) return resp(res, '404', 'No whitelabel config found for this domain');
+
+        // Optional: generate signed url for logo if needed
+        let logo_url = null;
+        if (client.logo_file) {
+            const { isGcsConfigured, getSignedUrl } = require('../utils/gcs');
+            if (isGcsConfigured()) {
+                logo_url = await getSignedUrl(GCS_PREFIX + client.logo_file);
+            }
+        }
+
+        return resp(res, '200', {
+            id: client.id,
+            company_name: client.company_name,
+            primary_color_code: client.primary_color_code,
+            logo_file: client.logo_file,
+            logo_url: logo_url,
+            custom_domain: client.custom_domain
+        });
+    } catch (err) {
+        console.error(err);
+        return resp(res, '500', err.message);
+    }
+});
+
 // ── POST /api/B2bClients/login ────────────────────────────────
 router.post('/login', async (req, res) => {
     try {
@@ -255,7 +292,7 @@ router.post('/', uploadFields, async (req, res) => {
             primary_color_code, website, medical_officer_name, mrocc, clia_number,
             medical_officer_position, medical_officer_signature_file_name,
             is_approval, approval_note, smtp_server, smtp_port, smtp_email, smtp_password,
-            user_id, role_type_id, is_fixed_price, fixed_price_amount
+            user_id, role_type_id, is_fixed_price, fixed_price_amount, custom_domain
         } = body;
 
         const emailCheck = await validateUniqueLoginEmail(email);
@@ -277,11 +314,11 @@ router.post('/', uploadFields, async (req, res) => {
                 primary_color_code, website, medical_officer_name, mrocc, clia_number,
                 medical_officer_position, medical_officer_signature_file_name,
                 is_approval, approval_note, smtp_server, smtp_port, smtp_email, smtp_password,
-                user_id, role_type_id, status, deleted, is_fixed_price, fixed_price_amount
+                user_id, role_type_id, status, deleted, is_fixed_price, fixed_price_amount, custom_domain
             ) VALUES (
                 $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
                 $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,
-                $37,$38,true,false,$39,$40
+                $37,$38,true,false,$39,$40,$41
             ) RETURNING *`,
             [role_id, company_name, contact_person_name, mobile, public_phone_no,
                 normalizeLoginEmail(email), public_email, public_fax, address, country_id, state_id, city_id,
@@ -290,7 +327,7 @@ router.post('/', uploadFields, async (req, res) => {
                 primary_color_code, website, medical_officer_name, mrocc, clia_number,
                 medical_officer_position, medical_officer_signature_file_name,
                 is_approval, approval_note, smtp_server, smtp_port, smtp_email, smtp_password,
-                user_id, role_type_id, is_fixed_price || false, fixed_price_amount || 0]
+                user_id, role_type_id, is_fixed_price || false, fixed_price_amount || 0, custom_domain]
         );
 
         if (row && row.email) {
@@ -342,7 +379,7 @@ router.get('/:id', async (req, res) => {
                     primary_color_code, website, smtp_server, smtp_port, smtp_email, smtp_password,
                     status, deleted, wallet_balance, is_fixed_price, fixed_price_amount,
                     pincode, medical_officer_name, medical_officer_position, mrocc, clia_number,
-                    is_approval, approval_note
+                    is_approval, approval_note, custom_domain
              FROM b2b_clients WHERE id = $1 LIMIT 1`,
             [req.params.id]
         );
@@ -387,7 +424,7 @@ router.put('/:id', uploadFields, async (req, res) => {
             'medical_officer_name', 'medical_officer_position', 'mrocc', 'clia_number',
             'logo_file', 'report_header_file', 'report_footer_file', 'medical_officer_signature_file_name',
             'smtp_server', 'smtp_port', 'smtp_email', 'smtp_password',
-            'is_approval', 'approval_note', 'status', 'is_fixed_price', 'fixed_price_amount'
+            'is_approval', 'approval_note', 'status', 'is_fixed_price', 'fixed_price_amount', 'custom_domain'
         ];
 
         const updates = [];
