@@ -34,49 +34,50 @@ async function resolveCertLogoPath(lab) {
 function drawCertBannerHeader(doc, { left, right, y, logoPath, hasLabLogo, company, address, phone, fax, email }) {
     const logoW = 88;
     const logoH = 64;
-    const infoW = 230;
-    const infoX = right - infoW;
     const startY = y;
+
+    let infoX = left;
 
     if (hasLabLogo && logoPath) {
         try {
             doc.image(logoPath, left, y, { fit: [logoW, logoH] });
+            infoX = left + logoW + 20; // 20px gap between logo and text
         } catch (err) {
             console.warn('Could not embed lab logo:', err.message);
         }
     }
 
-    let infoY = y;
+    const infoW = right - infoX;
+    let infoY = y + (hasLabLogo ? 4 : 0);
+
     if (company) {
-        doc.font('Times-Bold').fontSize(12).fillColor('#111')
-            .text(company, infoX, infoY, { width: infoW, align: 'right' });
+        doc.font('Helvetica-Bold').fontSize(22).fillColor('#111')
+            .text(company, infoX, infoY, { width: infoW, align: 'left' });
+        infoY += 26;
+    }
+    
+    doc.font('Helvetica').fontSize(10.5).fillColor('#111');
+    if (address) {
+        doc.text(address, infoX, infoY, { width: infoW, align: 'left' });
         infoY += 14;
     }
-    doc.font('Times-Roman').fontSize(10).fillColor('#111');
-    if (address) {
-        doc.text(address, infoX, infoY, { width: infoW, align: 'right' });
-        infoY += 12;
-    }
-    const tellLine = [
-        phone ? `(Tell) ${phone}` : '',
-        fax ? `(Fax) ${fax}` : '',
-    ].filter(Boolean).join(' ');
-    if (tellLine) {
-        doc.text(tellLine, infoX, infoY, { width: infoW, align: 'right' });
-        infoY += 12;
-    }
-    if (email) {
-        doc.text(email, infoX, infoY, { width: infoW, align: 'right' });
-        infoY += 12;
+    
+    const contactLine = [
+        phone ? `Phone: ${phone}` : '',
+        fax ? `Fax: ${fax}` : '',
+        email ? email : '',
+    ].filter(Boolean).join(' • ');
+    
+    if (contactLine) {
+        doc.text(contactLine, infoX, infoY, { width: infoW, align: 'left' });
+        infoY += 14;
     }
 
     const blockH = Math.max(hasLabLogo ? logoH : 0, infoY - startY);
-    let hy = startY + blockH + 8;
+    let hy = startY + blockH + 12;
 
-    doc.moveTo(left, hy).lineTo(right, hy).strokeColor('#6c9cd4').lineWidth(2).stroke();
-    hy += 4;
-    doc.moveTo(left, hy).lineTo(right, hy).strokeColor('#6c9cd4').lineWidth(1).stroke();
-    return hy + 14;
+    doc.moveTo(left, hy).lineTo(right, hy).strokeColor('#60a5fa').lineWidth(3).stroke();
+    return hy + 18;
 }
 
 /** Vector checkmark stroke — no font glyphs (avoids & / * rendering issues). */
