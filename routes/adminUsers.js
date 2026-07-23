@@ -4,7 +4,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { query, queryOne } = require('../db');
 const { JWT_SECRET } = require('../middleware/auth');
-const { validateLoginUser } = require('../utils/loginAuth');
+const { validateLoginUser, passwordMatches } = require('../utils/loginAuth');
 const { validateUniqueLoginEmail, normalizeLoginEmail } = require('../utils/emailUniqueness');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
@@ -178,7 +178,7 @@ router.post('/changePassword', async (req, res) => {
         const { userId, oldPassword, newPassword } = req.body;
         const user = await queryOne(`SELECT * FROM admin_users WHERE id = $1`, [userId]);
         if (!user) return resp(res, '404', 'User not found');
-        const isMatch = await bcrypt.compare(oldPassword, user.password);
+        const isMatch = await passwordMatches(oldPassword, user.password);
         if (!isMatch) return resp(res, '401', 'Old password is incorrect');
         const hashed = await bcrypt.hash(newPassword, 10);
         await query(`UPDATE admin_users SET password = $1 WHERE id = $2`, [hashed, userId]);
