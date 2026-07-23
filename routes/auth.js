@@ -124,6 +124,44 @@ router.post('/login', async (req, res) => {
             }
 
             const user = result.user;
+            
+            // Whitelabel Login Domain Validation
+            const login_domain = req.body.login_domain || null;
+            let userCustomDomain = null;
+
+            if (table === 'b2b_clients') {
+                userCustomDomain = user.custom_domain;
+            } else if (table === 'corporate_clients' && user.b2b_client_id) {
+                const b2b = await queryOne(`SELECT custom_domain FROM b2b_clients WHERE id = $1`, [user.b2b_client_id]);
+                if (b2b) {
+                    userCustomDomain = b2b.custom_domain;
+                }
+            } else if (table === 'admin_users' && user.user_id) {
+                const b2b = await queryOne(`SELECT custom_domain FROM b2b_clients WHERE id = $1`, [user.user_id]);
+                if (b2b) {
+                    userCustomDomain = b2b.custom_domain;
+                }
+            }
+
+            // Reject if login constraints are violated
+            if (login_domain) {
+                // User is trying to login from a whitelabel domain (e.g. lab.diyalab.biz)
+                if (table === 'super_admin') {
+                    lastError = { code: '403', message: 'Superadmin cannot login from a whitelabel domain.' };
+                    continue;
+                }
+                if (userCustomDomain !== login_domain) {
+                    lastError = { code: '403', message: 'You are not authorized to login from this domain.' };
+                    continue;
+                }
+            } else {
+                // User is trying to login from the standard MetroLab domain
+                if (table !== 'super_admin' && userCustomDomain) {
+                    lastError = { code: '403', message: 'Please login using your designated whitelabel portal.' };
+                    continue;
+                }
+            }
+
             let portal;
             let payload;
 
