@@ -378,23 +378,14 @@ async function findAlternateEmployees(current) {
         '(e.status IS DISTINCT FROM false)',
         'e.id <> $1',
         `(
-            NOT EXISTS (
-                SELECT 1
-                FROM test_request_employee tre2
-                WHERE tre2.test_request_id = $2
-                  AND tre2.employee_id = e.id
-                  AND tre2.deleted = false
-            )
-            OR EXISTS (
+            EXISTS (
                 SELECT 1
                 FROM test_request_employee tre3
                 WHERE tre3.test_request_id = $2
                   AND tre3.employee_id = e.id
                   AND tre3.deleted = false
                   AND tre3.status IS DISTINCT FROM false
-                  AND COALESCE(tre3.is_selected_for_drug, false) = false
-                  AND COALESCE(tre3.is_selected_for_alcohol, false) = false
-                  AND COALESCE(tre3.is_selected_for_alternate, false) = false
+                  AND tre3.is_selected_for_alternate = true
                   AND NOT EXISTS (
                       SELECT 1
                       FROM waiting_list wl
@@ -886,6 +877,11 @@ router.post('/downloadTestRequestReport', async (req, res) => {
             JOIN employees e ON tre.employee_id = e.id
             WHERE tre.test_request_id = $1
         `, [id]);
+
+        const totalSelectedCount = employees.filter(
+            (e) => e.is_selected_for_drug || e.is_selected_for_alcohol || e.is_selected_for_alternate
+        ).length;
+        tr.total_selected_count = totalSelectedCount;
 
         const pdf = await buildTestRequestReportPdf({ tr, employees, authUser: req.user });
 

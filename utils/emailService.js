@@ -97,7 +97,7 @@ const sendWelcomeB2BMail = async (to, companyName, password, lab = null) => {
     const bodyHtml = [
         buildGreeting(companyName),
         buildParagraph('Your Lab account has been successfully created. You can now log in to the B2B Portal to manage your operations.'),
-        buildPrimaryButton('Log In to B2B Portal', getLoginUrl()),
+        buildPrimaryButton('Log In to B2B Portal', getLoginUrl(lab?.custom_domain)),
         buildInfoBox([
             { label: 'Username / Email', value: to },
             { label: 'Password', value: password },
@@ -114,7 +114,7 @@ const sendWelcomeCorporateMail = async (to, companyName, password, lab = null) =
     const bodyHtml = [
         buildGreeting(companyName),
         buildParagraph('Your Corporate account has been successfully created. You can now log in to the Corporate Portal to request tests and view reports.'),
-        buildPrimaryButton('Log In to Corporate Portal', getLoginUrl()),
+        buildPrimaryButton('Log In to Corporate Portal', getLoginUrl(lab?.custom_domain)),
         buildInfoBox([
             { label: 'Username / Email', value: to },
             { label: 'Password', value: password },
@@ -182,7 +182,7 @@ const sendLabNotificationMail = async (to, labName, corporateName, title, count,
             { label: 'Number of Employees', value: String(count) },
         ]),
         buildParagraph('Please log in to your B2B Portal to view the full details and process the request.'),
-        buildPrimaryButton('Open B2B Portal', getLoginUrl()),
+        buildPrimaryButton('Open B2B Portal', getLoginUrl(lab?.custom_domain)),
     ].join('');
     const { html } = await buildBrandedEmail({
         lab,
