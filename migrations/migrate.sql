@@ -78,3 +78,4 @@ CREATE INDEX IF NOT EXISTS idx_patient_city_id ON patient(city_id);
 
 -- ── B2B Whitelabel Custom Domain ──────────────────────────────
 ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS custom_domain VARCHAR(255) UNIQUE;
+ALTER TABLE b2b_clients ALTER COLUMN custom_domain DROP NOT NULL;

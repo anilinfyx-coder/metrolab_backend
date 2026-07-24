@@ -327,7 +327,7 @@ router.post('/', uploadFields, async (req, res) => {
                 primary_color_code, website, medical_officer_name, mrocc, clia_number,
                 medical_officer_position, medical_officer_signature_file_name,
                 is_approval, approval_note, smtp_server, smtp_port, smtp_email, smtp_password,
-                user_id, role_type_id, is_fixed_price || false, fixed_price_amount || 0, custom_domain]
+                user_id, role_type_id, is_fixed_price || false, fixed_price_amount || 0, custom_domain || null]
         );
 
         if (row && row.email) {
@@ -434,7 +434,7 @@ router.put('/:id', uploadFields, async (req, res) => {
         for (const key of fields) {
             if (Object.prototype.hasOwnProperty.call(body, key) && body[key] !== undefined) {
                 let value = body[key];
-                if (['country_id', 'state_id', 'city_id'].includes(key) && (value === '' || value === 'null')) {
+                if (['country_id', 'state_id', 'city_id', 'custom_domain'].includes(key) && (value === '' || value === 'null')) {
                     value = null;
                 }
                 updates.push(`${key} = $${idx++}`);

@@ -603,6 +603,7 @@ router.get('/b2bClientOverview/:id', async (req, res) => {
                    ON wl.id = wtl.waiting_list_id
                   AND wl.deleted = false
                   AND wl.b2b_client_id = $1
+                  AND wl.creation_timestamp::date = CURRENT_DATE
                  LEFT JOIN (
                     SELECT DISTINCT waiting_list_id, lab_test_id
                     FROM lab_test_category_report
