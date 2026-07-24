@@ -27,6 +27,26 @@ const uploadFields = upload.fields([
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
+/** Test Status donut: today | 7d | 30d | all (default today) */
+function normalizeStatusRange(raw) {
+    const value = String(raw || 'today').toLowerCase();
+    if (value === '7d' || value === '30d' || value === 'all') return value;
+    return 'today';
+}
+
+function statusRangeSql(alias = 'wl', range = 'today') {
+    if (range === 'all') return '';
+    if (range === '7d') {
+        return ` AND ${alias}.creation_timestamp >= (CURRENT_DATE - 6)
+                 AND ${alias}.creation_timestamp < (CURRENT_DATE + 1)`;
+    }
+    if (range === '30d') {
+        return ` AND ${alias}.creation_timestamp >= (CURRENT_DATE - 29)
+                 AND ${alias}.creation_timestamp < (CURRENT_DATE + 1)`;
+    }
+    return ` AND ${alias}.creation_timestamp::date = CURRENT_DATE`;
+}
+
 // Uploads each provided field's file to GCS and returns { [field]: fileName }.
 async function persistUploadedFiles(files) {
     const result = {};
@@ -353,15 +373,52 @@ router.get('/dashboardStats', authMiddleware, async (req, res) => {
             return resp(res, '403', 'Forbidden');
         }
 
-        const { rows } = await query(
-            `SELECT COUNT(*)::int AS count
-             FROM lab_test_category_report
-             WHERE deleted = false AND b2b_client_id = $1`,
-            [req.user.id]
-        );
+        const b2bId = req.user.id;
+        const statusRange = normalizeStatusRange(req.query.statusRange || req.query.range || 'today');
+        const dateSql = statusRangeSql('wl', statusRange);
+
+        const [completedRow, statusRow] = await Promise.all([
+            queryOne(
+                `SELECT COUNT(*)::int AS count
+                 FROM lab_test_category_report
+                 WHERE deleted = false AND b2b_client_id = $1`,
+                [b2bId]
+            ),
+            queryOne(
+                `SELECT
+                    COUNT(*)::int AS total,
+                    COUNT(*) FILTER (WHERE r.waiting_list_id IS NOT NULL)::int AS completed,
+                    COUNT(*) FILTER (WHERE r.waiting_list_id IS NULL)::int AS pending
+                 FROM waiting_test_lab_test wtl
+                 INNER JOIN waiting_list wl
+                   ON wl.id = wtl.waiting_list_id
+                  AND wl.deleted = false
+                  AND wl.b2b_client_id = $1
+                  ${dateSql}
+                 LEFT JOIN (
+                    SELECT DISTINCT waiting_list_id, lab_test_id
+                    FROM lab_test_category_report
+                    WHERE deleted = false
+                 ) r
+                   ON r.waiting_list_id = wl.id
+                  AND r.lab_test_id = wtl.lab_test_id
+                 WHERE wtl.deleted = false`,
+                [b2bId]
+            ),
+        ]);
+
+        const completed = parseInt(statusRow?.completed || 0, 10);
+        const pending = parseInt(statusRow?.pending || 0, 10);
+        const total = parseInt(statusRow?.total || 0, 10) || (completed + pending);
 
         return resp(res, '200', {
-            total_completed_tests: rows[0]?.count ?? 0,
+            total_completed_tests: completedRow?.count ?? 0,
+            status_distribution: {
+                range: statusRange,
+                completed,
+                pending,
+                total,
+            },
         });
     } catch (err) {
         console.error(err);
