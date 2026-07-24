@@ -56,6 +56,67 @@ function normalizeRevenueRange(raw) {
     return '6m';
 }
 
+/** Test Status donut: today | 7d | 30d | all (default today) */
+function normalizeStatusRange(raw) {
+    const value = String(raw || 'today').toLowerCase();
+    if (value === '7d' || value === '30d' || value === 'all') return value;
+    return 'today';
+}
+
+/** SQL AND-clause on waiting_list.creation_timestamp for status distribution */
+function statusRangeSql(alias = 'wl', range = 'today') {
+    if (range === 'all') return '';
+    if (range === '7d') {
+        return ` AND ${alias}.creation_timestamp >= (CURRENT_DATE - 6)
+                 AND ${alias}.creation_timestamp < (CURRENT_DATE + 1)`;
+    }
+    if (range === '30d') {
+        return ` AND ${alias}.creation_timestamp >= (CURRENT_DATE - 29)
+                 AND ${alias}.creation_timestamp < (CURRENT_DATE + 1)`;
+    }
+    return ` AND ${alias}.creation_timestamp::date = CURRENT_DATE`;
+}
+
+async function fetchTestStatusDistribution({ b2bClientId = null, range = 'today' } = {}) {
+    const statusRange = normalizeStatusRange(range);
+    const dateSql = statusRangeSql('wl', statusRange);
+    const params = [];
+    let b2bSql = '';
+    if (b2bClientId != null) {
+        params.push(b2bClientId);
+        b2bSql = ` AND wl.b2b_client_id = $${params.length}`;
+    }
+
+    const row = await queryOne(
+        `SELECT
+            COUNT(*)::int AS total,
+            COUNT(*) FILTER (WHERE r.waiting_list_id IS NOT NULL)::int AS completed,
+            COUNT(*) FILTER (WHERE r.waiting_list_id IS NULL)::int AS pending
+         FROM waiting_test_lab_test wtl
+         INNER JOIN waiting_list wl
+           ON wl.id = wtl.waiting_list_id
+          AND wl.deleted = false
+          ${b2bSql}
+          ${dateSql}
+         LEFT JOIN (
+            SELECT DISTINCT waiting_list_id, lab_test_id
+            FROM lab_test_category_report
+            WHERE deleted = false
+         ) r
+           ON r.waiting_list_id = wl.id
+          AND r.lab_test_id = wtl.lab_test_id
+         WHERE wtl.deleted = false`,
+        params
+    );
+
+    return {
+        range: statusRange,
+        completed: parseInt(row?.completed || 0, 10),
+        pending: parseInt(row?.pending || 0, 10),
+        total: parseInt(row?.total || 0, 10),
+    };
+}
+
 async function fetchRevenueSubscriptionOverview(rangeInput) {
     const range = normalizeRevenueRange(rangeInput);
 
@@ -131,8 +192,14 @@ router.get('/dashboardStats', async (req, res) => {
         }
 
         // Run counting queries in parallel for faster execution
-        const [b2b, corporate, completedLabTests, patients, activeSubs] = await Promise.all([
-            queryOne('SELECT COUNT(*) as count FROM b2b_clients WHERE deleted = false'),
+        const [b2b, whitelabel, corporate, completedLabTests, patients, activeSubs, income] = await Promise.all([
+            queryOne(`SELECT COUNT(*) as count FROM b2b_clients
+                      WHERE deleted = false
+                        AND (custom_domain IS NULL OR TRIM(custom_domain) = '')`),
+            queryOne(`SELECT COUNT(*) as count FROM b2b_clients
+                      WHERE deleted = false
+                        AND custom_domain IS NOT NULL
+                        AND TRIM(custom_domain) <> ''`),
             queryOne('SELECT COUNT(*) as count FROM corporate_clients WHERE deleted = false'),
             queryOne('SELECT COUNT(*) as count FROM lab_test_category_report WHERE deleted = false'),
             queryOne('SELECT COUNT(*) as count FROM patient WHERE deleted = false'),
@@ -142,15 +209,33 @@ router.get('/dashboardStats', async (req, res) => {
                       WHERE s.deleted = false
                         AND s.status IS DISTINCT FROM false
                         AND s.start_date <= CURRENT_DATE
-                        AND s.end_date >= CURRENT_DATE`)
+                        AND s.end_date >= CURRENT_DATE`),
+            queryOne(`SELECT
+                        COALESCE((
+                          SELECT SUM(amount)::float
+                          FROM b2b_client_subscription
+                          WHERE deleted = false
+                        ), 0) AS subscription_income,
+                        COALESCE((
+                          SELECT SUM(ABS(amount))::float
+                          FROM b2b_wallet_transactions
+                          WHERE UPPER(transaction_type) = 'DEBIT'
+                        ), 0) AS wallet_used`),
         ]);
+
+        const subscriptionIncome = parseFloat(income?.subscription_income || 0);
+        const walletUsed = parseFloat(income?.wallet_used || 0);
         
         const data = {
             total_b2b_clients: parseInt(b2b.count, 10),
+            total_whitelabel_clients: parseInt(whitelabel.count, 10),
             total_corporate_clients: parseInt(corporate.count, 10),
+            total_subscription_income: subscriptionIncome,
+            total_wallet_used: walletUsed,
+            total_income: subscriptionIncome + walletUsed,
             total_lab_tests: parseInt(completedLabTests.count, 10),
             total_patients: parseInt(patients.count, 10),
-            total_active_subscriptions: parseInt(activeSubs.count, 10)
+            total_active_subscriptions: parseInt(activeSubs.count, 10),
         };
 
         // Update cache
@@ -245,28 +330,10 @@ router.get('/labTestActivity', async (req, res) => {
 // GET /api/SuperAdmin/testStatusDistribution — Completed vs Pending assigned waiting tests
 router.get('/testStatusDistribution', async (req, res) => {
     try {
-        const row = await queryOne(
-            `SELECT
-                COUNT(*)::int AS total,
-                COUNT(*) FILTER (WHERE r.waiting_list_id IS NOT NULL)::int AS completed,
-                COUNT(*) FILTER (WHERE r.waiting_list_id IS NULL)::int AS pending
-             FROM waiting_test_lab_test wtl
-             INNER JOIN waiting_list wl
-               ON wl.id = wtl.waiting_list_id
-              AND wl.deleted = false
-             LEFT JOIN (
-                SELECT DISTINCT waiting_list_id, lab_test_id
-                FROM lab_test_category_report
-                WHERE deleted = false
-             ) r
-               ON r.waiting_list_id = wl.id
-              AND r.lab_test_id = wtl.lab_test_id
-             WHERE wtl.deleted = false`
-        );
-        const completed = parseInt(row?.completed || 0, 10);
-        const pending = parseInt(row?.pending || 0, 10);
-        const total = parseInt(row?.total || 0, 10);
-        return resp(res, '200', { completed, pending, total });
+        const data = await fetchTestStatusDistribution({
+            range: req.query.range || req.query.statusRange || 'today',
+        });
+        return resp(res, '200', data);
     } catch (err) {
         console.error(err);
         return resp(res, '500', err.message);
@@ -278,15 +345,18 @@ router.get('/dashboardOverview', async (req, res) => {
     try {
         const activityRange = String(req.query.activityRange || '7d').toLowerCase() === '30d' ? 30 : 7;
         const revenueRange = normalizeRevenueRange(req.query.revenueRange || req.query.months || '6m');
+        const statusRange = normalizeStatusRange(req.query.statusRange || req.query.range || 'today');
         const listLimit = 5;
         const lowWalletThreshold = 50;
 
         const [
             b2b,
+            whitelabel,
             corporate,
             completedLabTests,
             patients,
             activeSubsCount,
+            income,
             latestB2b,
             activeSubs,
             topTests,
@@ -297,7 +367,13 @@ router.get('/dashboardOverview', async (req, res) => {
             expired,
             lowWallets,
         ] = await Promise.all([
-            queryOne('SELECT COUNT(*)::int AS count FROM b2b_clients WHERE deleted = false'),
+            queryOne(`SELECT COUNT(*)::int AS count FROM b2b_clients
+                      WHERE deleted = false
+                        AND (custom_domain IS NULL OR TRIM(custom_domain) = '')`),
+            queryOne(`SELECT COUNT(*)::int AS count FROM b2b_clients
+                      WHERE deleted = false
+                        AND custom_domain IS NOT NULL
+                        AND TRIM(custom_domain) <> ''`),
             queryOne('SELECT COUNT(*)::int AS count FROM corporate_clients WHERE deleted = false'),
             queryOne('SELECT COUNT(*)::int AS count FROM lab_test_category_report WHERE deleted = false'),
             queryOne('SELECT COUNT(*)::int AS count FROM patient WHERE deleted = false'),
@@ -308,6 +384,17 @@ router.get('/dashboardOverview', async (req, res) => {
                         AND s.status IS DISTINCT FROM false
                         AND s.start_date <= CURRENT_DATE
                         AND s.end_date >= CURRENT_DATE`),
+            queryOne(`SELECT
+                        COALESCE((
+                          SELECT SUM(amount)::float
+                          FROM b2b_client_subscription
+                          WHERE deleted = false
+                        ), 0) AS subscription_income,
+                        COALESCE((
+                          SELECT SUM(ABS(amount))::float
+                          FROM b2b_wallet_transactions
+                          WHERE UPPER(transaction_type) = 'DEBIT'
+                        ), 0) AS wallet_used`),
             query(
                 `SELECT id, company_name, contact_person_name, mobile, email, wallet_balance, status, creation_timestamp
                  FROM b2b_clients
@@ -366,24 +453,7 @@ router.get('/dashboardOverview', async (req, res) => {
                  ORDER BY d.day ASC`,
                 [activityRange]
             ),
-            queryOne(
-                `SELECT
-                    COUNT(*)::int AS total,
-                    COUNT(*) FILTER (WHERE r.waiting_list_id IS NOT NULL)::int AS completed,
-                    COUNT(*) FILTER (WHERE r.waiting_list_id IS NULL)::int AS pending
-                 FROM waiting_test_lab_test wtl
-                 INNER JOIN waiting_list wl
-                   ON wl.id = wtl.waiting_list_id
-                  AND wl.deleted = false
-                 LEFT JOIN (
-                    SELECT DISTINCT waiting_list_id, lab_test_id
-                    FROM lab_test_category_report
-                    WHERE deleted = false
-                 ) r
-                   ON r.waiting_list_id = wl.id
-                  AND r.lab_test_id = wtl.lab_test_id
-                 WHERE wtl.deleted = false`
-            ),
+            fetchTestStatusDistribution({ range: statusRange }),
             fetchRevenueSubscriptionOverview(revenueRange),
             queryOne(
                 `SELECT COUNT(*)::int AS count
@@ -427,7 +497,11 @@ router.get('/dashboardOverview', async (req, res) => {
         return resp(res, '200', {
             stats: {
                 total_b2b_clients: parseInt(b2b?.count || 0, 10),
+                total_whitelabel_clients: parseInt(whitelabel?.count || 0, 10),
                 total_corporate_clients: parseInt(corporate?.count || 0, 10),
+                total_subscription_income: parseFloat(income?.subscription_income || 0),
+                total_wallet_used: parseFloat(income?.wallet_used || 0),
+                total_income: parseFloat(income?.subscription_income || 0) + parseFloat(income?.wallet_used || 0),
                 total_lab_tests: parseInt(completedLabTests?.count || 0, 10),
                 total_patients: parseInt(patients?.count || 0, 10),
                 total_active_subscriptions: parseInt(activeSubsCount?.count || 0, 10),
@@ -439,11 +513,7 @@ router.get('/dashboardOverview', async (req, res) => {
                 range: `${activityRange}d`,
                 items: activityRows.rows || [],
             },
-            status_distribution: {
-                completed: parseInt(statusRow?.completed || 0, 10),
-                pending: parseInt(statusRow?.pending || 0, 10),
-                total: parseInt(statusRow?.total || 0, 10),
-            },
+            status_distribution: statusRow,
             revenue: revenueData,
             alerts: {
                 expiring_subscriptions: parseInt(expiring?.count || 0, 10),
@@ -534,6 +604,7 @@ router.get('/b2bClientOverview/:id', async (req, res) => {
         }
 
         const activityRange = String(req.query.activityRange || '7d').toLowerCase() === '30d' ? 30 : 7;
+        const statusRange = normalizeStatusRange(req.query.statusRange || req.query.range || 'today');
         const listLimit = 5;
         const lowWalletThreshold = 50;
 
@@ -593,27 +664,7 @@ router.get('/b2bClientOverview/:id', async (req, res) => {
                  WHERE deleted = false AND b2b_client_id = $1`,
                 [clientId]
             ),
-            queryOne(
-                `SELECT
-                    COUNT(*)::int AS total,
-                    COUNT(*) FILTER (WHERE r.waiting_list_id IS NOT NULL)::int AS completed,
-                    COUNT(*) FILTER (WHERE r.waiting_list_id IS NULL)::int AS pending
-                 FROM waiting_test_lab_test wtl
-                 INNER JOIN waiting_list wl
-                   ON wl.id = wtl.waiting_list_id
-                  AND wl.deleted = false
-                  AND wl.b2b_client_id = $1
-                  AND wl.creation_timestamp::date = CURRENT_DATE
-                 LEFT JOIN (
-                    SELECT DISTINCT waiting_list_id, lab_test_id
-                    FROM lab_test_category_report
-                    WHERE deleted = false
-                 ) r
-                   ON r.waiting_list_id = wl.id
-                  AND r.lab_test_id = wtl.lab_test_id
-                 WHERE wtl.deleted = false`,
-                [clientId]
-            ),
+            fetchTestStatusDistribution({ b2bClientId: clientId, range: statusRange }),
             queryOne(
                 `SELECT id, start_date, end_date, amount, status, creation_timestamp
                  FROM b2b_client_subscription
@@ -771,8 +822,6 @@ router.get('/b2bClientOverview/:id', async (req, res) => {
 
         const completed = parseInt(completedCount?.count || 0, 10);
         const pending = parseInt(pendingRow?.pending || 0, 10);
-        const waitingCompleted = parseInt(pendingRow?.completed || 0, 10);
-        const waitingTotal = parseInt(pendingRow?.total || 0, 10);
 
         return resp(res, '200', {
             client,
@@ -797,11 +846,7 @@ router.get('/b2bClientOverview/:id', async (req, res) => {
                 range: `${activityRange}d`,
                 items: activityRows.rows || [],
             },
-            status_distribution: {
-                completed: waitingCompleted,
-                pending,
-                total: waitingTotal,
-            },
+            status_distribution: pendingRow,
             assigned_tests: assignedTests.rows || [],
             recent_patients: recentPatients.rows || [],
             recent_reports: recentReports.rows || [],
