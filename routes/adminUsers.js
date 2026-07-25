@@ -175,7 +175,11 @@ router.delete('/:id', async (req, res) => {
 // ── POST /api/AdminUsers/changePassword ──────────────────────
 router.post('/changePassword', async (req, res) => {
     try {
-        const { userId, oldPassword, newPassword } = req.body;
+        const { oldPassword, newPassword } = req.body;
+        const userId = req.body.userId || req.user?.id;
+        if (!userId) return resp(res, '401', 'Unauthorized');
+        if (!oldPassword || !newPassword) return resp(res, '400', 'Old and new password are required');
+
         const user = await queryOne(`SELECT * FROM admin_users WHERE id = $1`, [userId]);
         if (!user) return resp(res, '404', 'User not found');
         const isMatch = await passwordMatches(oldPassword, user.password);
