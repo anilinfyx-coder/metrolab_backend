@@ -13,6 +13,7 @@ const {
 } = require('./uploadedFiles');
 const { PREFIX } = require('./gcs');
 const { buildEffectiveParamsCte } = require('./reportRequestParameters');
+const { decryptPIIFields } = require('./cryptoUtils');
 const {
     resolveCertLabBranding,
     resolveCertLogoPath,
@@ -145,7 +146,7 @@ async function loadLabTestReportBundle(reportId) {
         `SELECT r.*,
                 p.name as patient_name,
                 p.uid as patient_uid,
-                p.email as patient_email, custom_domain,
+                p.email as patient_email,
                 p.mobile as patient_mobile,
                 p.dob::text as patient_dob,
                 p.gender as patient_gender,
@@ -171,6 +172,8 @@ async function loadLabTestReportBundle(reportId) {
         [reportId]
     );
     if (!report) return null;
+
+    decryptPIIFields(report);
 
     const b2bClientId = await resolveOwnerB2bClientId({
         b2b_client_id: report.b2b_client_id || report.patient_b2b_client_id || report.waiting_list_b2b_client_id,
@@ -333,7 +336,7 @@ function drawReportHeader(doc, bundle) {
         address,
         phone,
         fax,
-        email, custom_domain,
+        email,
     });
 
     doc.font('Times-Bold').fontSize(16).fillColor('#111')

@@ -31,12 +31,18 @@ function encryptPII(text) {
 }
 
 function decryptPII(text) {
-    if (!text || typeof text !== 'string' || !text.includes(':')) return text;
+    if (text == null || text === '') return text;
+    // Dates / numbers from drivers — only encrypted payloads are iv:ciphertext strings
+    if (text instanceof Date) {
+        return text.toISOString().split('T')[0];
+    }
+    const raw = String(text);
+    if (!raw.includes(':')) return raw;
     try {
-        const textParts = text.split(':');
+        const textParts = raw.split(':');
         // Check if the IV looks valid (32 hex chars = 16 bytes)
-        if (textParts[0].length !== 32) return text;
-        
+        if (textParts[0].length !== 32) return raw;
+
         const iv = Buffer.from(textParts.shift(), 'hex');
         const encryptedText = Buffer.from(textParts.join(':'), 'hex');
         const decipher = crypto.createDecipheriv(algorithm, Buffer.from(ENCRYPTION_KEY), iv);
@@ -45,8 +51,45 @@ function decryptPII(text) {
         return decrypted.toString();
     } catch (e) {
         // If decryption fails (e.g. wrong key or malformed), return original
-        return text;
+        return raw;
     }
 }
 
-module.exports = { encryptPII, decryptPII };
+/** Common API field names that may hold encrypted DOB / DL / SSN */
+const PII_FIELD_KEYS = [
+    'dob',
+    'ssn',
+    'driving_license',
+    'patient_dob',
+    'patient_ssn',
+    'patient_dl',
+    'patient_driving_license',
+];
+
+/**
+ * Decrypt PII fields on a row (mutates and returns the same object).
+ * Safe for plaintext values — decryptPII leaves non-encrypted strings unchanged.
+ */
+function decryptPIIFields(row, extraKeys = []) {
+    if (!row || typeof row !== 'object') return row;
+    const keys = extraKeys.length ? [...PII_FIELD_KEYS, ...extraKeys] : PII_FIELD_KEYS;
+    for (const key of keys) {
+        if (row[key] != null && row[key] !== '') {
+            row[key] = decryptPII(row[key]);
+        }
+    }
+    return row;
+}
+
+function decryptPIIRows(rows, extraKeys = []) {
+    if (!Array.isArray(rows)) return rows;
+    return rows.map((row) => decryptPIIFields(row, extraKeys));
+}
+
+module.exports = {
+    encryptPII,
+    decryptPII,
+    decryptPIIFields,
+    decryptPIIRows,
+    PII_FIELD_KEYS,
+};

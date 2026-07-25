@@ -13,7 +13,7 @@ const {
     labText,
     CHECKBOX_SIZE,
 } = require('./certPdfCommon');
-const { decryptPII } = require('./cryptoUtils');
+const { decryptPIIFields } = require('./cryptoUtils');
 
 const AUTH_H = 88;
 
@@ -230,7 +230,7 @@ async function buildPhysicalExamCertPdf(id, options = {}) {
     );
 
     if (!cert) throw new Error('Certificate not found');
-    if (cert.patient_dob) cert.patient_dob = decryptPII(cert.patient_dob);
+    decryptPIIFields(cert);
 
     const lab = await resolveLoggedInLab(options.authUser, cert.b2b_client_id);
     const logoPath = await resolveCertLogoPath(lab);
