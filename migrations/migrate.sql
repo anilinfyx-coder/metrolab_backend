@@ -77,5 +77,86 @@ CREATE INDEX IF NOT EXISTS idx_patient_state_id ON patient(state_id);
 CREATE INDEX IF NOT EXISTS idx_patient_city_id ON patient(city_id);
 
 -- ── B2B Whitelabel Custom Domain ──────────────────────────────
-ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS custom_domain VARCHAR(255) UNIQUE;
-ALTER TABLE b2b_clients ALTER COLUMN custom_domain DROP NOT NULL;
+-- Must exist for report PDF download / branding queries
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS custom_domain VARCHAR(255);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_b2b_clients_custom_domain
+    ON b2b_clients (custom_domain)
+    WHERE custom_domain IS NOT NULL AND TRIM(custom_domain) <> '';
+
+-- ── B2B Whitelabel & Additional Fields ────────────────────────
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS tagline VARCHAR(255);
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS primary_color_code VARCHAR(50);
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS logo_file VARCHAR(255);
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS report_header_file VARCHAR(255);
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS report_footer_file VARCHAR(255);
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS smtp_server VARCHAR(255);
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS smtp_port VARCHAR(50);
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS smtp_email VARCHAR(255);
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS smtp_password VARCHAR(255);
+
+-- ── B2B Medical Officer & Approval Fields ─────────────────────
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS medical_officer_name VARCHAR(255);
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS medical_officer_position VARCHAR(255);
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS medical_officer_signature_file_name VARCHAR(255);
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS mrocc VARCHAR(255);
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS clia_number VARCHAR(255);
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS is_approval BOOLEAN DEFAULT false;
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS approval_note TEXT;
+
+-- ── B2B Location & Contact Fields ─────────────────────────────
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS district_id INT;
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS region_id INT;
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS pincode VARCHAR(50);
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS public_phone_no VARCHAR(50);
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS public_email VARCHAR(255);
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS public_fax VARCHAR(50);
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS support_mobile VARCHAR(50);
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS support_email VARCHAR(255);
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS support_person_name VARCHAR(255);
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS website VARCHAR(255);
+
+
+-- ── B2B Client Custom Prices Table ────────────────────────────
+CREATE TABLE IF NOT EXISTS b2b_client_custom_prices (
+    id SERIAL PRIMARY KEY,
+    b2b_client_id INTEGER REFERENCES b2b_clients(id),
+    lab_test_id INTEGER REFERENCES lab_tests(id),
+    custom_price NUMERIC NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(b2b_client_id, lab_test_id)
+);
+
+-- ── B2B Display Options ───────────────────────────────────────
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS display_options_customized BOOLEAN DEFAULT FALSE;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_collected_date BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_collected_time BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_received_date BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_received_time BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_reported_date BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_reported_time BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_report_status BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_regulation BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_specimen BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_final_result BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_requisition_no BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_test_remark BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_reason_for_test BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_final_result_disposition BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_final_remark BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_date_administered BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_test_date BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_test_time BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_test_performed_by BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_fasting BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_device_identifier BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_applied_to BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_lot BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_expire_date BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_date_read BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_mm_indurations BOOLEAN;
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_follow_up BOOLEAN;
+
+-- ── Patient PII columns must hold AES ciphertext (iv:payload) ─
+ALTER TABLE patient ALTER COLUMN dob TYPE TEXT USING dob::text;
+ALTER TABLE patient ALTER COLUMN ssn TYPE TEXT;
+ALTER TABLE patient ALTER COLUMN driving_license TYPE TEXT;

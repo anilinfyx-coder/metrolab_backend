@@ -3,15 +3,11 @@ const router = express.Router();
 const { pool, query, queryOne, formatDbError, isTooManyConnectionsError } = require('../db');
 const { authMiddleware } = require('../middleware/auth');
 const { resolveAdminContext } = require('../utils/adminContext');
-const { encryptPII, decryptPII } = require('../utils/cryptoUtils');
+const { encryptPII, decryptPIIFields } = require('../utils/cryptoUtils');
 const { respondListQuery } = require('../utils/pagination');
 
 function mapPatient(p) {
-    if (!p) return p;
-    if (p.driving_license) p.driving_license = decryptPII(p.driving_license);
-    if (p.ssn) p.ssn = decryptPII(p.ssn);
-    if (p.dob) p.dob = decryptPII(p.dob);
-    return p;
+    return decryptPIIFields(p);
 }
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
@@ -303,7 +299,7 @@ router.delete('/:id', async (req, res) => {
             `UPDATE patient SET deleted = true, deleted_timestamp = NOW() WHERE id = $1 RETURNING *`,
             [req.params.id]
         );
-        return resp(res, '200', patient);
+        return resp(res, '200', mapPatient(patient));
     } catch (err) {
         return resp(res, '500', err.message);
     }
