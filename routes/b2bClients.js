@@ -51,7 +51,7 @@ function statusRangeSql(alias = 'wl', range = 'today') {
 async function persistUploadedFiles(files) {
     const result = {};
     if (!files) return result;
-    
+
     const { isGcsConfigured } = require('../utils/gcs');
     if (!isGcsConfigured()) {
         console.warn('GCS is not configured (missing GCS_BUCKET). Skipping file upload for local development.');
@@ -202,7 +202,7 @@ router.get('/alerts', async (req, res) => {
                     subAlert = {
                         client,
                         type: 'subscription_expiring',
-                        message: b2b_client_id 
+                        message: b2b_client_id
                             ? `Your subscription expires in ${diffDays} day(s) on ${endDate.toISOString().split('T')[0]}. Please renew soon.`
                             : `Client ${client.company_name}'s subscription expires in ${diffDays} day(s) on ${endDate.toISOString().split('T')[0]}.`
                     };
@@ -237,8 +237,8 @@ router.get('/alerts', async (req, res) => {
         }
 
         return resp(res, '200', alerts);
-    } catch (err) { 
-        return resp(res, '500', err.message); 
+    } catch (err) {
+        return resp(res, '500', err.message);
     }
 });
 
@@ -358,7 +358,7 @@ router.post('/', uploadFields, async (req, res) => {
             delete labForEmail.smtp_port;
             delete labForEmail.smtp_email;
             delete labForEmail.smtp_password;
-            
+
             sendWelcomeB2BMail(row.email, row.company_name, password, labForEmail, metroLabEmailLab()).catch(err => console.error('B2B Email error:', err));
         }
 

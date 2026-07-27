@@ -62,6 +62,8 @@ CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_email ON password_reset_tok
 CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_hash ON password_reset_tokens(token_hash);
 
 -- ── B2B overrides for report result parameters ───────────────
+ALTER TABLE report_request_parameters ADD COLUMN IF NOT EXISTS b2b_client_id INT;
+ALTER TABLE report_questions ADD COLUMN IF NOT EXISTS b2b_client_id INT;
 ALTER TABLE report_request_parameters ADD COLUMN IF NOT EXISTS source_parameter_id INT;
 CREATE INDEX IF NOT EXISTS idx_report_request_parameters_source_b2b
     ON report_request_parameters(source_parameter_id, b2b_client_id)
