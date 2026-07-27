@@ -13,6 +13,10 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+// ── Global Billing Guard ──────────────────────────────────────
+const { billingGuard } = require('./middleware/billingGuard');
+app.use(billingGuard);
+
 // ── Core Routes ──────────────────────────────────────────────
 const authRouter             = require('./routes/auth');
 const adminUsersRouter       = require('./routes/adminUsers');
