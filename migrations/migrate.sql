@@ -162,3 +162,6 @@ ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_follow_up B
 ALTER TABLE patient ALTER COLUMN dob TYPE TEXT USING dob::text;
 ALTER TABLE patient ALTER COLUMN ssn TYPE TEXT;
 ALTER TABLE patient ALTER COLUMN driving_license TYPE TEXT;
+
+-- ── B2B Billing Mode Master Switch ────────────────────────
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS billing_mode VARCHAR(20) DEFAULT 'monthly';

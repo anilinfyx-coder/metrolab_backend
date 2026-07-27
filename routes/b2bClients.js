@@ -436,13 +436,35 @@ router.get('/:id', async (req, res) => {
                     primary_color_code, website, smtp_server, smtp_port, smtp_email, smtp_password,
                     status, deleted, wallet_balance, is_fixed_price, fixed_price_amount,
                     pincode, medical_officer_name, medical_officer_position, mrocc, clia_number,
-                    is_approval, approval_note, custom_domain
+                    is_approval, approval_note, custom_domain, billing_mode
              FROM b2b_clients WHERE id = $1 LIMIT 1`,
             [req.params.id]
         );
         if (!row) return resp(res, '404', 'B2B Client not found');
         return resp(res, '200', row);
     } catch (err) { return resp(res, '500', err.message); }
+});
+
+// ── PUT /api/B2bClients/:id/billingMode ──────────────────────
+router.put('/:id/billingMode', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { billing_mode } = req.body;
+        
+        if (!['monthly', 'yearly', 'custom'].includes(billing_mode)) {
+            return resp(res, '400', 'Invalid billing mode. Must be monthly, yearly, or custom.');
+        }
+
+        const row = await queryOne(
+            `UPDATE b2b_clients SET billing_mode = $1 WHERE id = $2 RETURNING billing_mode`,
+            [billing_mode, id]
+        );
+        
+        if (!row) return resp(res, '404', 'B2B Client not found');
+        return resp(res, '200', row);
+    } catch (err) {
+        return resp(res, '500', err.message);
+    }
 });
 
 // ── PUT /api/B2bClients/:id ───────────────────────────────────
