@@ -4,6 +4,7 @@ const cors = require('cors');
 const { pool } = require('./db');
 const { getDatabaseLabel, isManagedDatabase } = require('./dbConfig');
 const { runStartupMigrations } = require('./utils/runMigrations');
+const { runDataMigration } = require('./migrate_encrypted_data');
 
 const labTestReportRoutes = require('./routes/labTestReport');
 
@@ -91,6 +92,7 @@ const PORT = process.env.PORT || 5000;
 async function start() {
     try {
         await runStartupMigrations();
+        await runDataMigration();
     } catch (err) {
         console.error('❌ Startup migration failed:', err.message);
         // Continue listening — individual statements already logged; do not block API
