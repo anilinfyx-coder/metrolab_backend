@@ -10,6 +10,7 @@ const {
 } = require('../utils/labTestDisplayOptions');
 const { respondListQuery } = require('../utils/pagination');
 const { buildEffectiveParamsCte } = require('../utils/reportRequestParameters');
+const { decryptPIIFields } = require('../utils/cryptoUtils');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
@@ -71,6 +72,7 @@ router.get('/', async (req, res) => {
             orderBy: 'ORDER BY wl.id DESC',
             legacyLimit: 1000,
             defaultLimit: 10,
+            mapRow: decryptPIIFields,
         });
     } catch (err) { return resp(res, '500', err.message); }
 });
@@ -131,6 +133,8 @@ router.get('/:id', async (req, res) => {
             [req.params.id]
         );
         if (!row) return resp(res, '404', 'Waiting list entry not found');
+
+        decryptPIIFields(row);
 
         // Resolve owning B2B (supports B2B staff + corporate-linked admin users)
         const ownerB2bClientId = await resolveOwnerB2bClientId({

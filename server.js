@@ -89,7 +89,7 @@ async function start() {
         await runStartupMigrations();
     } catch (err) {
         console.error('❌ Startup migration failed:', err.message);
-        process.exit(1);
+        // Continue listening — individual statements already logged; do not block API
     }
 
     app.listen(PORT, () => {

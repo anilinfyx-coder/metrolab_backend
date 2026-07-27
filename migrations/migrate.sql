@@ -79,7 +79,11 @@ CREATE INDEX IF NOT EXISTS idx_patient_state_id ON patient(state_id);
 CREATE INDEX IF NOT EXISTS idx_patient_city_id ON patient(city_id);
 
 -- ── B2B Whitelabel Custom Domain ──────────────────────────────
-ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS custom_domain VARCHAR(255) UNIQUE;
+-- Must exist for report PDF download / branding queries
+ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS custom_domain VARCHAR(255);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_b2b_clients_custom_domain
+    ON b2b_clients (custom_domain)
+    WHERE custom_domain IS NOT NULL AND TRIM(custom_domain) <> '';
 
 -- ── B2B Whitelabel & Additional Fields ────────────────────────
 ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS tagline VARCHAR(255);
@@ -153,3 +157,8 @@ ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_expire_date
 ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_date_read BOOLEAN;
 ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_mm_indurations BOOLEAN;
 ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS show_follow_up BOOLEAN;
+
+-- ── Patient PII columns must hold AES ciphertext (iv:payload) ─
+ALTER TABLE patient ALTER COLUMN dob TYPE TEXT USING dob::text;
+ALTER TABLE patient ALTER COLUMN ssn TYPE TEXT;
+ALTER TABLE patient ALTER COLUMN driving_license TYPE TEXT;

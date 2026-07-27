@@ -5,7 +5,7 @@ const PDFDocument = require('pdfkit');
 const muhammara = require('muhammara');
 const { queryOne } = require('../db');
 const { resolveCertLabBranding, resolveCertLogoPath, drawCertBannerHeader, drawCheckbox, drawUnderlineField, labText, CHECKBOX_SIZE } = require('./certPdfCommon');
-const { decryptPII } = require('./cryptoUtils');
+const { decryptPIIFields } = require('./cryptoUtils');
 
 function pad(n) {
     return String(n).padStart(2, '0');
@@ -193,7 +193,7 @@ async function buildAdultHealthCertPdf(id, options = {}) {
     );
 
     if (!cert) throw new Error('Certificate not found');
-    if (cert.patient_dob) cert.patient_dob = decryptPII(cert.patient_dob);
+    decryptPIIFields(cert);
 
     // Logged-in lab branding (admin staff → b2b via user_id, or b2b portal).
     const lab = await resolveLoggedInLab(options.authUser, cert.b2b_client_id);
