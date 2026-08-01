@@ -7,7 +7,8 @@ const CHECKBOX_SIZE = 12;
 
 const LAB_SELECT = `SELECT company_name, logo_file, report_header_file, address, public_phone_no, public_fax,
                 public_email, tagline, email, medical_officer_name, mrocc, clia_number,
-                medical_officer_signature_file_name
+                medical_officer_signature_file_name,
+                smtp_server, smtp_port, smtp_email, smtp_password
          FROM b2b_clients
          WHERE id = $1 AND deleted = false
          LIMIT 1`;

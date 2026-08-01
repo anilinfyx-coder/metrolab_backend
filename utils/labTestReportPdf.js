@@ -214,7 +214,8 @@ async function loadLabTestReportBundle(reportId) {
         ? await queryOne(
             `SELECT company_name, tagline, public_phone_no, public_fax, public_email, custom_domain, email,
                     address, medical_officer_name, mrocc, clia_number,
-                    medical_officer_signature_file_name, logo_file, report_header_file
+                    medical_officer_signature_file_name, logo_file, report_header_file,
+                    smtp_server, smtp_port, smtp_email, smtp_password
              FROM b2b_clients WHERE id = $1 LIMIT 1`,
             [b2bClientId]
         )
