@@ -780,12 +780,12 @@ router.post('/transferEmployeeToWaitingList', async (req, res) => {
         await client.query('BEGIN');
 
         let patient = null;
-        if (row.mobile) {
+        if (row.mobile && row.email) {
             const found = await client.query(
                 `SELECT * FROM patient
-                 WHERE deleted = false AND b2b_client_id = $1 AND mobile = $2
+                 WHERE deleted = false AND b2b_client_id = $1 AND mobile = $2 AND email = $3
                  ORDER BY id DESC LIMIT 1`,
-                [b2bClientId, row.mobile]
+                [b2bClientId, row.mobile, row.email]
             );
             patient = found.rows[0] || null;
         }

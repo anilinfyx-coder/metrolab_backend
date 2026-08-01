@@ -12,7 +12,7 @@ const {
     resolveUploadedFilePath,
 } = require('./uploadedFiles');
 const { PREFIX } = require('./gcs');
-const { buildEffectiveParamsCte } = require('./reportRequestParameters');
+const { buildEffectiveParamsCte, buildParameterValueLateralJoin } = require('./reportRequestParameters');
 const { decryptPIIFields } = require('./cryptoUtils');
 const {
     resolveCertLabBranding,
@@ -23,6 +23,21 @@ const {
 
 function showFlag(labTest, flag) {
     return !!(labTest && labTest[flag]);
+}
+
+const FINAL_RESULT_CODE_MAP = {
+    '1': 'Negative',
+    '2': 'Positive',
+    '3': 'Test Cancelled',
+    '4': 'Refusal (Adulterated)',
+    '5': 'Refusal (Substituted)',
+    '6': 'Dilute',
+};
+
+function formatFinalResult(value) {
+    if (value == null || value === '') return value;
+    const raw = String(value).trim();
+    return FINAL_RESULT_CODE_MAP[raw] || raw;
 }
 
 function pad(n) {
@@ -220,12 +235,9 @@ async function loadLabTestReportBundle(reportId) {
                     rp.screening_cutoff,
                     rp.confirmation_cutoff,
                     rp.unit_text,
-                    COALESCE(v.value, '') as value
+                    TRIM(COALESCE(v.value, '')) as value
              FROM effective_params rp
-             LEFT JOIN lab_test_category_report_request_parameter_value v
-               ON v.report_request_parameters_id = rp.id
-              AND v.lab_test_category_report_id = $1
-              AND v.deleted = false
+             ${buildParameterValueLateralJoin('$1', 'rp', 'v')}
              WHERE rp.status IS DISTINCT FROM false
              ORDER BY rp.id ASC`,
             paramParams,
@@ -237,12 +249,9 @@ async function loadLabTestReportBundle(reportId) {
                     rp.screening_cutoff,
                     rp.confirmation_cutoff,
                     rp.unit_text,
-                    COALESCE(v.value, '') as value
+                    TRIM(COALESCE(v.value, '')) as value
              FROM report_request_parameters rp
-             LEFT JOIN lab_test_category_report_request_parameter_value v
-               ON v.report_request_parameters_id = rp.id
-              AND v.lab_test_category_report_id = $1
-              AND v.deleted = false
+             ${buildParameterValueLateralJoin('$1', 'rp', 'v')}
              WHERE rp.lab_test_id = $2 AND rp.deleted = false
              ORDER BY rp.id ASC`,
             [reportId, report.lab_test_id],
@@ -554,7 +563,7 @@ function drawMroSection(doc, bundle, startY) {
     const contentWidth = right - left;
 
     const mroFields = [
-        { flag: 'show_final_result', label: 'Final Result :', value: report.final_result },
+        { flag: 'show_final_result', label: 'Final Result :', value: formatFinalResult(report.final_result) },
         { flag: 'show_test_remark', label: 'Remark :', value: report.test_remark },
         { flag: 'show_final_result_disposition', label: 'Final Result Disposition:', value: report.final_result_disposition },
         { flag: 'show_final_remark', label: 'Final Remark:', value: report.final_remark },

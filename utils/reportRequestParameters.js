@@ -104,6 +104,40 @@ function buildEffectiveParamsCte(b2bClientId, labTestId = null, paramIndexStart 
     return { sql, values, nextIndex: index };
 }
 
+/**
+ * Join saved parameter answers even when the saved parameter id is a
+ * global row and the UI row is a B2B override (or the reverse).
+ * reportIdParam should be like `$1`.
+ */
+function buildParameterValueLateralJoin(reportIdParam, rpAlias = 'rp', valueAlias = 'a') {
+    return `
+        LEFT JOIN LATERAL (
+            SELECT v.id, v.value, v.report_request_parameters_id
+            FROM lab_test_category_report_request_parameter_value v
+            LEFT JOIN ${TABLE} saved
+              ON saved.id = v.report_request_parameters_id
+            WHERE v.lab_test_category_report_id = ${reportIdParam}
+              AND v.deleted = false
+              AND (
+                v.report_request_parameters_id = ${rpAlias}.id
+                OR saved.source_parameter_id = ${rpAlias}.id
+                OR (
+                  ${rpAlias}.source_parameter_id IS NOT NULL
+                  AND (
+                    v.report_request_parameters_id = ${rpAlias}.source_parameter_id
+                    OR saved.source_parameter_id = ${rpAlias}.source_parameter_id
+                  )
+                )
+              )
+            ORDER BY CASE
+              WHEN v.report_request_parameters_id = ${rpAlias}.id THEN 0
+              ELSE 1
+            END,
+            v.id DESC
+            LIMIT 1
+        ) ${valueAlias} ON true`;
+}
+
 async function listEffectiveParams(b2bClientId, { labTestId = null, activeOnly = false } = {}) {
     await ensureSourceParameterColumn();
     const { sql, values } = buildEffectiveParamsCte(b2bClientId, labTestId, 1);
@@ -189,6 +223,7 @@ module.exports = {
     COPY_FIELDS,
     ensureSourceParameterColumn,
     buildEffectiveParamsCte,
+    buildParameterValueLateralJoin,
     listEffectiveParams,
     findOverrideForGlobal,
     createOverrideFromGlobal,
