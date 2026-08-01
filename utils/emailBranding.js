@@ -61,8 +61,9 @@ function resolveEmailLabForPortal(authUser, lab = null) {
  * Email header branding.
  * - Lab/B2B: uploaded logo_file only (no default)
  * - Super Admin / useMetroLabDefault: Metro Lab default logo
+ * - centeredLogoHeader: logo centered, no right-side company/contact block
  */
-async function buildEmailBranding(lab) {
+async function buildEmailBranding(lab, { centeredLogoHeader = false } = {}) {
     const useMetroDefault = lab?.useMetroLabDefault === true;
     const companyName = useMetroDefault
         ? METRO_LAB_NAME
@@ -104,18 +105,27 @@ async function buildEmailBranding(lab) {
         ? contactLines.map((line) => `<div style="font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #334155; line-height: 1.45; margin-bottom: 2px;">${line}</div>`).join('')
         : '';
 
-    // Super Admin: logo centered when no contact block
+    // Centered logo: used for welcome mails to B2B and corporate clients
+    const useCentered = centeredLogoHeader || useMetroDefault;
+
     let headerHtml;
-    if (useMetroDefault && logoCell) {
+    if (useCentered && logoCell) {
         headerHtml = `
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr>
                     <td align="center" style="padding-bottom: 4px;">
                         <img src="cid:${LOGO_CID}" alt="${escapeHtml(companyName)} Logo"
                              style="display: block; margin: 0 auto; max-width: 180px; max-height: 80px; width: auto; height: auto; object-fit: contain;" />
-                        <div style="font-family: 'Times New Roman', Georgia, serif; font-size: 17px; font-weight: 700; color: #111111; margin-top: 10px;">
-                            ${escapeHtml(companyName)}
-                        </div>
+                    </td>
+                </tr>
+            </table>`;
+    } else if (useCentered && companyName) {
+        // No logo but have a company name — show centered text
+        headerHtml = `
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                    <td align="center" style="padding-bottom: 4px;">
+                        <div style="font-family: 'Times New Roman', Georgia, serif; font-size: 20px; font-weight: 700; color: #111111;">${escapeHtml(companyName)}</div>
                     </td>
                 </tr>
             </table>`;

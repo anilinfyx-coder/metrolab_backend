@@ -79,41 +79,8 @@ function labOrFallback(labValue, fallback) {
     return textOrNull(labValue) || fallback;
 }
 
-/** Same branding rules as Adult Health Certificate PDF. */
-async function resolveLoggedInLab(authUser) {
-    if (!authUser || !authUser.id) return null;
-
-    let b2bId = null;
-
-    if (authUser.portal === 'b2b') {
-        b2bId = authUser.id;
-    } else {
-        const admin = await queryOne(
-            'SELECT user_id FROM admin_users WHERE id = $1 AND deleted = false LIMIT 1',
-            [authUser.id]
-        );
-        if (admin?.user_id) {
-            b2bId = admin.user_id;
-        } else if (authUser.portal !== 'admin') {
-            const asClient = await queryOne(
-                'SELECT id FROM b2b_clients WHERE id = $1 AND deleted = false LIMIT 1',
-                [authUser.id]
-            );
-            if (asClient) b2bId = authUser.id;
-        }
-    }
-
-    if (!b2bId) return null;
-
-    return queryOne(
-        `SELECT company_name, logo_file, report_header_file, address, public_phone_no, public_fax,
-                public_email, website, medical_officer_signature_file_name, tagline,
-                smtp_server, smtp_port, smtp_email, smtp_password
-         FROM b2b_clients
-         WHERE id = $1 AND deleted = false
-         LIMIT 1`,
-        [b2bId]
-    );
+async function resolveLoggedInLab(authUser, patientB2bClientId) {
+    return resolveCertLabBranding(authUser, patientB2bClientId);
 }
 
 
@@ -412,11 +379,17 @@ async function buildPhysicalExamCertPdf(id, options = {}) {
             
             let oX = left + 220;
             doc.text('Fit', oX, y + 2, { lineBreak: false });
-            drawField(doc, oX + 22, y, 70, cert.overall_condition === 'Fit' ? '✔' : '');
+            drawField(doc, oX + 22, y, 70, '');
+            if (cert.overall_condition === 'Fit') {
+                drawCheckMark(doc, oX + 22 + 30, y + 2);
+            }
             
             oX += 120;
             doc.text('Unfit', oX, y + 2, { lineBreak: false });
-            drawField(doc, oX + 34, y, 70, cert.overall_condition === 'Unfit' ? '✔' : '');
+            drawField(doc, oX + 34, y, 70, '');
+            if (cert.overall_condition === 'Unfit') {
+                drawCheckMark(doc, oX + 34 + 30, y + 2);
+            }
             y += 32;
 
             // Auth footer — just below content; nudge down only if a little leftover room

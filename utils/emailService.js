@@ -104,7 +104,7 @@ const sendWelcomeB2BMail = async (to, companyName, password, lab = null) => {
         ]),
         buildAlertBox('Please change your password after logging in for the first time.', { title: 'Important', variant: 'warning' }),
     ].join('');
-    const { html } = await buildBrandedEmail({ lab, title: `Welcome to ${branding.companyName}`, bodyHtml });
+    const { html } = await buildBrandedEmail({ lab, title: `Welcome to ${branding.companyName}`, bodyHtml, centeredLogoHeader: true });
     return sendMail(to, subject, html, [], lab);
 };
 
@@ -121,7 +121,7 @@ const sendWelcomeCorporateMail = async (to, companyName, password, lab = null) =
         ]),
         buildAlertBox('Please change your password after logging in for the first time.', { title: 'Important', variant: 'warning' }),
     ].join('');
-    const { html } = await buildBrandedEmail({ lab, title: `Welcome to ${branding.companyName}`, bodyHtml });
+    const { html } = await buildBrandedEmail({ lab, title: `Welcome to ${branding.companyName}`, bodyHtml, centeredLogoHeader: true });
     return sendMail(to, subject, html, [], lab);
 };
 

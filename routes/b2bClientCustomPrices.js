@@ -11,7 +11,10 @@ router.get('/', async (req, res) => {
         if (!b2b_client_id) return resp(res, '400', 'b2b_client_id is required');
 
         const { rows } = await query(
-            `SELECT * FROM b2b_client_custom_prices WHERE b2b_client_id = $1`, 
+            `SELECT cp.*, lt.name as test_name 
+             FROM b2b_client_custom_prices cp
+             JOIN lab_tests lt ON cp.lab_test_id = lt.id
+             WHERE cp.b2b_client_id = $1`, 
             [b2b_client_id]
         );
         return resp(res, '200', rows);

@@ -29,47 +29,46 @@ async function resolveCertLogoPath(lab) {
 }
 
 /**
- * Header banner: logo left, lab details right, double blue rule (certs + lab reports).
+ * Header banner: logo left, lab details right-aligned, double blue rule (certs + lab reports).
  */
 function drawCertBannerHeader(doc, { left, right, y, logoPath, hasLabLogo, company, address, phone, fax, email }) {
     const logoW = 88;
     const logoH = 64;
     const startY = y;
 
-    let infoX = left;
-
     if (hasLabLogo && logoPath) {
         try {
             doc.image(logoPath, left, y, { fit: [logoW, logoH] });
-            infoX = left + logoW + 20; // 20px gap between logo and text
         } catch (err) {
             console.warn('Could not embed lab logo:', err.message);
         }
     }
 
-    const infoW = right - infoX;
+    // Text block spans from just after logo to the right edge, text is right-aligned
+    const textLeft = hasLabLogo && logoPath ? left + logoW + 12 : left;
+    const infoW = right - textLeft;
     let infoY = y + (hasLabLogo ? 4 : 0);
 
     if (company) {
         doc.font('Helvetica-Bold').fontSize(22).fillColor('#111')
-            .text(company, infoX, infoY, { width: infoW, align: 'left' });
+            .text(company, textLeft, infoY, { width: infoW, align: 'right' });
         infoY += 26;
     }
-    
+
     doc.font('Helvetica').fontSize(10.5).fillColor('#111');
     if (address) {
-        doc.text(address, infoX, infoY, { width: infoW, align: 'left' });
+        doc.text(address, textLeft, infoY, { width: infoW, align: 'right' });
         infoY += 14;
     }
-    
+
     const contactLine = [
         phone ? `Phone: ${phone}` : '',
         fax ? `Fax: ${fax}` : '',
         email ? email : '',
     ].filter(Boolean).join(' • ');
-    
+
     if (contactLine) {
-        doc.text(contactLine, infoX, infoY, { width: infoW, align: 'left' });
+        doc.text(contactLine, textLeft, infoY, { width: infoW, align: 'right' });
         infoY += 14;
     }
 
@@ -112,7 +111,7 @@ function drawUnderlineField(doc, x, y, width, value, fontSize = 10.5, lineOffset
     doc.moveTo(x, y + lineOffset).lineTo(x + width, y + lineOffset).strokeColor('#111').lineWidth(0.8).stroke();
     if (text) {
         doc.font('Helvetica-Bold').fontSize(fontSize).fillColor('#111')
-            .text(text, x + 2, y + 1, { width: width - 4, align: 'center', lineBreak: false });
+            .text(text, x + 2, y + 1, { width: width - 4, align: 'center', lineBreak: false, ellipsis: true });
     }
 }
 

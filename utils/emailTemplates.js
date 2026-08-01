@@ -134,8 +134,8 @@ function buildEmailDocument({ branding, title, titleColor = '#0f172a', bodyHtml 
 </html>`;
 }
 
-async function buildBrandedEmail({ lab, title, titleColor, bodyHtml }) {
-    const branding = await buildEmailBranding(lab);
+async function buildBrandedEmail({ lab, title, titleColor, bodyHtml, centeredLogoHeader = false }) {
+    const branding = await buildEmailBranding(lab, { centeredLogoHeader });
     const html = buildEmailDocument({ branding, title, titleColor, bodyHtml });
     return { html, branding };
 }
