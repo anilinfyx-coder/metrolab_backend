@@ -8,7 +8,7 @@ const {
     resolveOwnerB2bClientId,
 } = require('../utils/labTestDisplayOptions');
 const { respondListQuery } = require('../utils/pagination');
-const { buildEffectiveParamsCte } = require('../utils/reportRequestParameters');
+const { buildEffectiveParamsCte, buildParameterValueLateralJoin, ensureSourceParameterColumn } = require('../utils/reportRequestParameters');
 
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
@@ -117,6 +117,7 @@ router.post('/getLabTestCategoryReportDetails', async (req, res) => {
     try {
         await query(`ALTER TABLE lab_test_category_report ADD COLUMN IF NOT EXISTS b2b_client_id INT`);
         await query(`ALTER TABLE lab_test_category_report ADD COLUMN IF NOT EXISTS corporate_client_id INT`);
+        await ensureSourceParameterColumn();
 
         const { id } = req.body;
 
@@ -129,6 +130,28 @@ router.post('/getLabTestCategoryReportDetails', async (req, res) => {
 
         if (!report) {
             return res.status(404).json({ response_code: '404', obj: 'Report not found' });
+        }
+
+        if (!report.reason_for_test && report.waiting_list_id) {
+            const wl = await queryOne(
+                `SELECT reason_for_test FROM waiting_list WHERE id = $1 LIMIT 1`,
+                [report.waiting_list_id]
+            );
+            if (wl?.reason_for_test) {
+                report.reason_for_test = wl.reason_for_test;
+            }
+        }
+
+        const FINAL_RESULT_CODE_MAP = {
+            '1': 'Negative',
+            '2': 'Positive',
+            '3': 'Test Cancelled',
+            '4': 'Refusal (Adulterated)',
+            '5': 'Refusal (Substituted)',
+            '6': 'Dilute',
+        };
+        if (report.final_result != null && FINAL_RESULT_CODE_MAP[String(report.final_result).trim()]) {
+            report.final_result = FINAL_RESULT_CODE_MAP[String(report.final_result).trim()];
         }
 
         const labTest = await queryOne(`SELECT * FROM lab_tests WHERE id = $1`, [report.lab_test_id]);
@@ -207,12 +230,9 @@ router.post('/getLabTestCategoryReportDetails', async (req, res) => {
                     rp.confirmation_cutoff,
                     rp.is_mandatory,
                     a.id as answer_id,
-                    COALESCE(a.value, '') as value
+                    TRIM(COALESCE(a.value, '')) as value
                 FROM effective_params rp
-                LEFT JOIN lab_test_category_report_request_parameter_value a
-                    ON a.report_request_parameters_id = rp.id
-                   AND a.lab_test_category_report_id = $1
-                   AND a.deleted = false
+                ${buildParameterValueLateralJoin('$1', 'rp', 'a')}
                 WHERE rp.status IS DISTINCT FROM false
                 ORDER BY rp.id ASC
             `;
@@ -233,12 +253,9 @@ router.post('/getLabTestCategoryReportDetails', async (req, res) => {
                     rp.confirmation_cutoff,
                     rp.is_mandatory,
                     a.id as answer_id,
-                    COALESCE(a.value, '') as value
+                    TRIM(COALESCE(a.value, '')) as value
                 FROM report_request_parameters rp
-                LEFT JOIN lab_test_category_report_request_parameter_value a
-                    ON a.report_request_parameters_id = rp.id
-                   AND a.lab_test_category_report_id = $1
-                   AND a.deleted = false
+                ${buildParameterValueLateralJoin('$1', 'rp', 'a')}
                 WHERE rp.lab_test_id = $2 AND rp.deleted = false
                     AND rp.status IS DISTINCT FROM false
                 ORDER BY rp.id ASC
@@ -327,7 +344,18 @@ router.post('/saveLabTestCategoryReport', async (req, res) => {
             data.date_of_test || null,
             data.test_performed_by || null,
             data.reason_for_test || null,
-            data.final_result || null,
+            (() => {
+                const FINAL_RESULT_CODE_MAP = {
+                    '1': 'Negative',
+                    '2': 'Positive',
+                    '3': 'Test Cancelled',
+                    '4': 'Refusal (Adulterated)',
+                    '5': 'Refusal (Substituted)',
+                    '6': 'Dilute',
+                };
+                const raw = data.final_result == null ? '' : String(data.final_result).trim();
+                return FINAL_RESULT_CODE_MAP[raw] || raw || null;
+            })(),
             data.test_remark || null,
             data.report_status || null,
             data.final_remark || null,
@@ -391,26 +419,38 @@ router.post('/saveLabTestCategoryReport', async (req, res) => {
                 if (!paramId) continue;
 
                 const existing = await queryOne(`
-                    SELECT id FROM lab_test_category_report_request_parameter_value
-                    WHERE lab_test_category_report_id = $1 AND report_request_parameters_id = $2
-                      AND deleted = false
+                    SELECT v.id
+                    FROM lab_test_category_report_request_parameter_value v
+                    LEFT JOIN report_request_parameters saved
+                      ON saved.id = v.report_request_parameters_id
+                    LEFT JOIN report_request_parameters current
+                      ON current.id = $2
+                    WHERE v.lab_test_category_report_id = $1
+                      AND v.deleted = false
+                      AND (
+                        v.report_request_parameters_id = $2
+                        OR saved.source_parameter_id = $2
+                        OR (
+                          current.source_parameter_id IS NOT NULL
+                          AND (
+                            v.report_request_parameters_id = current.source_parameter_id
+                            OR saved.source_parameter_id = current.source_parameter_id
+                          )
+                        )
+                      )
+                    ORDER BY CASE WHEN v.report_request_parameters_id = $2 THEN 0 ELSE 1 END, v.id DESC
                     LIMIT 1
                 `, [id, paramId]);
 
-                let stringVal = p.value;
-                if (stringVal !== null && stringVal !== undefined) {
-                    stringVal = stringVal.toString();
-                } else {
-                    stringVal = '';
-                }
+                const stringVal = p.value == null ? '' : String(p.value).trim();
 
                 if (existing) {
                     await queryOne(`
                         UPDATE lab_test_category_report_request_parameter_value
-                        SET value = $1
+                        SET value = $1, report_request_parameters_id = $3
                         WHERE id = $2
-                    `, [stringVal, existing.id]);
-                } else {
+                    `, [stringVal, existing.id, paramId]);
+                } else if (stringVal) {
                     await queryOne(`
                         INSERT INTO lab_test_category_report_request_parameter_value (
                             lab_test_category_report_id, report_request_parameters_id, value,

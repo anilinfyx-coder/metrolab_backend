@@ -3,6 +3,27 @@ const router = express.Router();
 const { query, queryOne } = require('../db');
 const { resolveOwnerB2bClientId } = require('../utils/labTestDisplayOptions');
 
+const FINAL_RESULT_CODE_MAP = {
+    '1': 'Negative',
+    '2': 'Positive',
+    '3': 'Test Cancelled',
+    '4': 'Refusal (Adulterated)',
+    '5': 'Refusal (Substituted)',
+    '6': 'Dilute',
+};
+
+function resolveFinalResult(finalResult, finalResultText) {
+    if (finalResult === undefined || finalResult === null) {
+        return finalResultText ? String(finalResultText).trim() : null;
+    }
+    const raw = String(finalResult).trim();
+    if (raw === '' || raw === '__other__') {
+        return finalResultText ? String(finalResultText).trim() : null;
+    }
+    if (FINAL_RESULT_CODE_MAP[raw]) return FINAL_RESULT_CODE_MAP[raw];
+    return raw;
+}
+
 const resp = (res, code, obj) => res.json({ response_code: code, obj });
 
 async function ensureReportOwnerColumns() {
@@ -23,17 +44,21 @@ router.post('/', async (req, res) => {
             dateRead, mmIndurations, followUp, finalResult, finalResultText,
             testRemark, referenceRangeNote, clinicalSignificanceNote,
             resultInterpretationNote, finalResultDisposition, finalRemark,
-            dateAdministered, appliedToArm,
+            dateAdministered, appliedToArm, reasonForTest,
             questions, parameters
         } = req.body;
 
         // Get patient + owner context from waiting_list
         const wl = await queryOne(
-            `SELECT patient_id, b2b_client_id, corporate_client_id
+            `SELECT patient_id, b2b_client_id, corporate_client_id, reason_for_test
              FROM waiting_list WHERE id = $1`,
             [waiting_list_id]
         );
         if (!wl) return resp(res, '404', 'Waiting list not found');
+
+        const resolvedReasonForTest = (reasonForTest && String(reasonForTest).trim())
+            || wl.reason_for_test
+            || null;
 
         const resolvedB2bId = await resolveOwnerB2bClientId({
             b2b_client_id: b2b_client_id || wl.b2b_client_id,
@@ -113,8 +138,8 @@ router.post('/', async (req, res) => {
         const recTimestamp = formatDateTime(receivedDate, receivedTime);
         const repTimestamp = formatDateTime(reportedDate, reportedTime);
 
-        // Determine final result text (handle "Other")
-        const fResult = finalResult === '' ? finalResultText : finalResult;
+        // Store human-readable Final Result (map legacy 1/2/... codes)
+        const fResult = resolveFinalResult(finalResult, finalResultText);
 
         // Generate report UID (LTCR0001, LTCR0002, ...)
         const lastUidRow = await queryOne(
@@ -142,7 +167,7 @@ router.post('/', async (req, res) => {
                 follow_up, final_result, test_remark, reference_range_note,
                 clinical_significance_note, result_interpretation_note,
                 final_result_disposition, final_remark, date_administered,
-                applied_to_arm, status, deleted, creation_timestamp
+                applied_to_arm, reason_for_test, status, deleted, creation_timestamp
             ) VALUES (
                 $1, $2, $3, $4,
                 $5, $6,
@@ -153,7 +178,7 @@ router.post('/', async (req, res) => {
                 $22, $23, $24, $25,
                 $26, $27,
                 $28, $29, $30,
-                $31, false, false, NOW()
+                $31, $32, false, false, NOW()
             ) RETURNING *`,
             [
                 reportUid, wl.patient_id, lab_test_id, waiting_list_id,
@@ -165,7 +190,7 @@ router.post('/', async (req, res) => {
                 followUp, fResult, testRemark, referenceRangeNote,
                 clinicalSignificanceNote, resultInterpretationNote,
                 finalResultDisposition, finalRemark, dateAdministered || null,
-                appliedToArm
+                appliedToArm, resolvedReasonForTest
             ]
         );
 
@@ -187,13 +212,16 @@ router.post('/', async (req, res) => {
         // Insert parameters
         if (parameters && parameters.length > 0) {
             for (const p of parameters) {
-                if (p.value) {
+                const rawValue = p.value == null ? '' : String(p.value).trim();
+                if (rawValue) {
+                    const paramId = p.id || p.report_request_parameters_id;
+                    if (!paramId) continue;
                     await queryOne(
                         `INSERT INTO lab_test_category_report_request_parameter_value (
                             lab_test_category_report_id, report_request_parameters_id, value,
                             status, deleted, creation_timestamp
                         ) VALUES ($1, $2, $3, true, false, NOW())`,
-                        [report.id, p.id, p.value.toString()]
+                        [report.id, paramId, rawValue]
                     );
                 }
             }
