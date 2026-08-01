@@ -41,11 +41,6 @@ router.get('/', async (req, res) => {
         }
 
         const formatTestRequestRow = (r) => {
-            const date = new Date(r.creation_timestamp);
-            const pad = (n) => String(n).padStart(2, '0');
-            const dateTime = Number.isNaN(date.getTime())
-                ? ''
-                : `${pad(date.getDate())}-${pad(date.getMonth() + 1)}-${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 
             return {
                 id: r.id,
@@ -58,8 +53,8 @@ router.get('/', async (req, res) => {
                 numberOfEmployee: r.total_count,
                 corporateClientCompany: r.corporateClientCompany,
                 b2bClientCompany: r.b2bClientCompany,
+                creationTimestamp: r.creation_timestamp ? new Date(r.creation_timestamp).toISOString() : null,
                 creation_timestamp: r.creation_timestamp,
-                creationTimestamp: dateTime,
             };
         };
 
@@ -202,9 +197,8 @@ router.post('/getTestRequestList', async (req, res) => {
             ORDER BY id DESC
         `, [corpClientId]);
 
-        // Format creation_timestamp like legacy UI: MM/DD/YYYY, HH:mm A
+        // Send creation_timestamp as ISO string so frontend can format it in user's local timezone
         const formatted = rows.map(r => {
-            const date = new Date(r.creation_timestamp);
             return {
                 id: r.id,
                 title: r.title,
@@ -214,7 +208,7 @@ router.post('/getTestRequestList', async (req, res) => {
                 status: r.status,
                 allSubmitStatus: r.status,
                 numberOfEmployee: r.total_count,
-                creationTimestamp: `${date.getMonth() + 1}/${date.getDate()}/${date.getFullYear()}, ${date.getHours() > 12 ? date.getHours() - 12 : (date.getHours() === 0 ? 12 : date.getHours())}:${date.getMinutes().toString().padStart(2, '0')} ${date.getHours() >= 12 ? 'PM' : 'AM'}`
+                creationTimestamp: r.creation_timestamp ? new Date(r.creation_timestamp).toISOString() : null
             };
         });
 
@@ -246,13 +240,7 @@ router.post('/changeTestRequestStatus', async (req, res) => {
     }
 });
 
-function formatListDateTime(value) {
-    if (!value) return '';
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) return '';
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${pad(date.getDate())}-${pad(date.getMonth() + 1)}-${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-}
+
 
 function transferRequisitionNo(testRequestId, employeeId) {
     return `TR-${testRequestId}-E-${employeeId}`;
@@ -529,7 +517,7 @@ router.get('/:id', async (req, res) => {
             total_selected_count: totalSelectedCount,
             status: tr.status,
             creation_timestamp: tr.creation_timestamp,
-            creationTimestamp: formatListDateTime(tr.creation_timestamp),
+            creationTimestamp: tr.creation_timestamp ? new Date(tr.creation_timestamp).toISOString() : null,
             corporateClientCompany: tr.corporate_client_company,
             b2bClientCompany: tr.b2b_client_company,
             employees: employees.map(mapEmployeeRow),

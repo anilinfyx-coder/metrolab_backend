@@ -105,8 +105,8 @@ async function buildEmailBranding(lab, { centeredLogoHeader = false } = {}) {
         ? contactLines.map((line) => `<div style="font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #334155; line-height: 1.45; margin-bottom: 2px;">${line}</div>`).join('')
         : '';
 
-    // Centered logo: used for welcome mails to B2B and corporate clients
-    const useCentered = centeredLogoHeader || useMetroDefault;
+    // Centered logo: always used for all emails (test reports, certificates, etc.) as requested
+    const useCentered = true;
 
     let headerHtml;
     if (useCentered && logoCell) {
@@ -114,7 +114,7 @@ async function buildEmailBranding(lab, { centeredLogoHeader = false } = {}) {
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr>
                     <td align="center" style="padding-bottom: 4px;">
-                        <img src="cid:${LOGO_CID}" alt="${escapeHtml(companyName)} Logo"
+                        <img src="cid:${LOGO_CID}" alt="Logo"
                              style="display: block; margin: 0 auto; max-width: 180px; max-height: 80px; width: auto; height: auto; object-fit: contain;" />
                     </td>
                 </tr>

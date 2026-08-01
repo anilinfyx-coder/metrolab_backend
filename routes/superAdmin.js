@@ -396,7 +396,16 @@ router.get('/dashboardOverview', async (req, res) => {
                           WHERE UPPER(transaction_type) = 'DEBIT'
                         ), 0) AS wallet_used`),
             query(
-                `SELECT id, company_name, contact_person_name, mobile, email, wallet_balance, status, creation_timestamp
+                `SELECT id, company_name, contact_person_name, mobile, email, wallet_balance, status, creation_timestamp, billing_mode,
+                        EXISTS (
+                            SELECT 1
+                            FROM b2b_client_subscription s
+                            WHERE s.b2b_client_id = b2b_clients.id
+                              AND s.deleted = false
+                              AND s.status IS DISTINCT FROM false
+                              AND s.start_date <= CURRENT_DATE
+                              AND s.end_date >= CURRENT_DATE
+                        ) AS has_active_subscription
                  FROM b2b_clients
                  WHERE deleted = false
                  ORDER BY creation_timestamp DESC NULLS LAST, id DESC
