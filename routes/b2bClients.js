@@ -173,56 +173,54 @@ router.get('/alerts', async (req, res) => {
         const alerts = [];
 
         for (const client of clients) {
-            // Check for subscription alerts
-            // 1. Expiring soon (end_date > today, end_date <= today + 2 days)
-            // 2. Expired (end_date < today)
-            const subscriptions = await query(
-                `SELECT * FROM b2b_client_subscription 
-                 WHERE b2b_client_id = $1 AND deleted = false
-                 ORDER BY end_date DESC`,
-                [client.id]
-            );
+            const isCustom = client.billing_mode === 'custom';
 
-            let hasActiveSub = false;
-            let subAlert = null;
+            if (!isCustom) {
+                // Check for subscription alerts
+                // 1. Expiring soon (end_date > today, end_date <= today + 2 days)
+                // 2. Expired (end_date < today)
+                const subscriptions = await query(
+                    `SELECT * FROM b2b_client_subscription 
+                     WHERE b2b_client_id = $1 AND deleted = false
+                     ORDER BY end_date DESC`,
+                    [client.id]
+                );
 
-            if (subscriptions.rows.length > 0) {
-                const latestSub = subscriptions.rows[0];
-                const endDate = new Date(latestSub.end_date);
-                const today = new Date();
-                today.setHours(0, 0, 0, 0);
+                let subAlert = null;
 
-                const diffTime = endDate.getTime() - today.getTime();
-                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+                if (subscriptions.rows.length > 0) {
+                    const latestSub = subscriptions.rows[0];
+                    const endDate = new Date(latestSub.end_date);
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
 
-                if (diffDays > 2) {
-                    hasActiveSub = true;
-                } else if (diffDays >= 0 && diffDays <= 2) {
-                    hasActiveSub = true;
-                    subAlert = {
-                        client,
-                        type: 'subscription_expiring',
-                        message: b2b_client_id
-                            ? `Your subscription expires in ${diffDays} day(s) on ${endDate.toISOString().split('T')[0]}. Please renew soon.`
-                            : `Client ${client.company_name}'s subscription expires in ${diffDays} day(s) on ${endDate.toISOString().split('T')[0]}.`
-                    };
-                } else {
-                    subAlert = {
-                        client,
-                        type: 'subscription_expired',
-                        message: b2b_client_id
-                            ? `Your subscription expired on ${endDate.toISOString().split('T')[0]}. Please renew or add wallet balance.`
-                            : `Client ${client.company_name}'s subscription expired on ${endDate.toISOString().split('T')[0]}.`
-                    };
+                    const diffTime = endDate.getTime() - today.getTime();
+                    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+                    if (diffDays >= 0 && diffDays <= 2) {
+                        subAlert = {
+                            client,
+                            type: 'subscription_expiring',
+                            message: b2b_client_id
+                                ? `Your subscription expires in ${diffDays} day(s) on ${endDate.toISOString().split('T')[0]}. Please renew soon.`
+                                : `Client ${client.company_name}'s subscription expires in ${diffDays} day(s) on ${endDate.toISOString().split('T')[0]}.`
+                        };
+                    } else if (diffDays < 0) {
+                        subAlert = {
+                            client,
+                            type: 'subscription_expired',
+                            message: b2b_client_id
+                                ? `Your subscription expired on ${endDate.toISOString().split('T')[0]}. Please renew.`
+                                : `Client ${client.company_name}'s subscription expired on ${endDate.toISOString().split('T')[0]}.`
+                        };
+                    }
                 }
-            }
 
-            if (subAlert) {
-                alerts.push(subAlert);
-            }
-
-            // Wallet balance check if they have NO active subscription (this means they rely on wallet deduction or fixed price from wallet)
-            if (!hasActiveSub) {
+                if (subAlert) {
+                    alerts.push(subAlert);
+                }
+            } else {
+                // Custom pricing: check wallet balance
                 const balance = parseFloat(client.wallet_balance || 0);
                 if (balance <= 0) {
                     alerts.push({
@@ -351,15 +349,10 @@ router.post('/', uploadFields, async (req, res) => {
         );
 
         if (row && row.email) {
-            // Strip smtp fields so the B2B welcome email is sent from the Superadmin (.env) credentials
-            // instead of the B2B client's newly added credentials, while preserving their branding.
-            const labForEmail = { ...row };
-            delete labForEmail.smtp_server;
-            delete labForEmail.smtp_port;
-            delete labForEmail.smtp_email;
-            delete labForEmail.smtp_password;
+            // Since this action is performed by Superadmin, use Metrolab branding & credentials
+            const labForEmail = metroLabEmailLab();
 
-            sendWelcomeB2BMail(row.email, row.company_name, password, labForEmail, metroLabEmailLab()).catch(err => console.error('B2B Email error:', err));
+            sendWelcomeB2BMail(row.email, row.company_name, password, labForEmail).catch(err => console.error('B2B Email error:', err));
         }
 
         return resp(res, '200', row);
@@ -461,6 +454,7 @@ router.put('/:id/billingMode', async (req, res) => {
         );
         
         if (!row) return resp(res, '404', 'B2B Client not found');
+
         return resp(res, '200', row);
     } catch (err) {
         return resp(res, '500', err.message);

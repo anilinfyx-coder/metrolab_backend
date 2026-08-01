@@ -443,6 +443,10 @@ function mapEmployeeRow(e) {
         transferred_to_waiting_list: transferred,
         is_cancelled: isCancelled,
         cancellation_reason: e.cancellation_reason || '',
+        drugReportSubmitStatus: !!e.drug_report_id,
+        drugReportId: e.drug_report_id || null,
+        alcoholReportSubmitStatus: !!e.alcohol_report_id,
+        alcoholReportId: e.alcohol_report_id || null,
     };
 }
 
@@ -478,7 +482,23 @@ router.get('/:id', async (req, res) => {
                    e.mobile,
                    e.department,
                    e.email,
-                   wl.id AS waiting_list_id
+                   wl.id AS waiting_list_id,
+                   (
+                       SELECT r.id FROM lab_test_category_report r
+                       JOIN lab_tests lt ON lt.id = r.lab_test_id
+                       WHERE r.waiting_list_id = wl.id
+                         AND r.deleted = false
+                         AND lt.name ILIKE '%drug%'
+                       LIMIT 1
+                   ) AS drug_report_id,
+                   (
+                       SELECT r.id FROM lab_test_category_report r
+                       JOIN lab_tests lt ON lt.id = r.lab_test_id
+                       WHERE r.waiting_list_id = wl.id
+                         AND r.deleted = false
+                         AND lt.name ILIKE '%alcohol%'
+                       LIMIT 1
+                   ) AS alcohol_report_id
             FROM test_request_employee tre
             JOIN employees e ON e.id = tre.employee_id
             LEFT JOIN waiting_list wl ON wl.employee_id = tre.employee_id

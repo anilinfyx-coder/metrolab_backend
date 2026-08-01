@@ -17,6 +17,7 @@ const resp = (res, code, obj) => res.json({ response_code: code, obj });
 router.use(authMiddleware);
 
 // GET /api/WaitingList — all with patient info + linked tests
+// ?pending_only=true  → only entries that still have at least one test without a completed report
 router.get('/', async (req, res) => {
     try {
         let whereClause = `WHERE wl.deleted = false`;
@@ -38,6 +39,22 @@ router.get('/', async (req, res) => {
                 whereClause += ` AND wl.corporate_client_id = $${i++}`;
                 params.push(ctx.corporate_client_id);
             }
+        }
+
+        // pending_only=true → only rows where at least one test is still missing a report
+        if (req.query.pending_only === 'true') {
+            whereClause += `
+              AND EXISTS (
+                SELECT 1 FROM waiting_test_lab_test wtl2
+                WHERE wtl2.waiting_list_id = wl.id
+                  AND wtl2.deleted = false
+                  AND NOT EXISTS (
+                    SELECT 1 FROM lab_test_category_report r
+                    WHERE r.waiting_list_id = wl.id
+                      AND r.lab_test_id = wtl2.lab_test_id
+                      AND r.deleted = false
+                  )
+              )`;
         }
 
         const dataSql = `
@@ -76,6 +93,7 @@ router.get('/', async (req, res) => {
         });
     } catch (err) { return resp(res, '500', err.message); }
 });
+
 
 // GET /api/WaitingList/patient/:patientId/history
 // One row per assigned test, including the generated report when available.

@@ -74,49 +74,7 @@ function labOrFallback(labValue, fallback) {
     return textOrNull(labValue) || fallback;
 }
 
-/**
- * Resolve branding for the signed-in lab.
- * Used by download AND email so both PDFs match the preview.
- * Admin staff → b2b via admin_users.user_id; B2B portal → client id.
- * Falls back to Metro Lab when no lab row is found.
- */
-async function resolveLoggedInLab(authUser) {
-    if (!authUser || !authUser.id) return null;
 
-    let b2bId = null;
-
-    if (authUser.portal === 'b2b') {
-        b2bId = authUser.id;
-    } else {
-        // admin portal, or older tokens without portal — try admin_users first
-        const admin = await queryOne(
-            'SELECT user_id FROM admin_users WHERE id = $1 AND deleted = false LIMIT 1',
-            [authUser.id]
-        );
-        if (admin?.user_id) {
-            b2bId = admin.user_id;
-        } else if (authUser.portal !== 'admin') {
-            // last resort: treat id as b2b client id
-            const asClient = await queryOne(
-                'SELECT id FROM b2b_clients WHERE id = $1 AND deleted = false LIMIT 1',
-                [authUser.id]
-            );
-            if (asClient) b2bId = authUser.id;
-        }
-    }
-
-    if (!b2bId) return null;
-
-    return queryOne(
-        `SELECT company_name, logo_file, report_header_file, address, public_phone_no, public_fax,
-                public_email, website, medical_officer_signature_file_name, tagline,
-                smtp_server, smtp_port, smtp_email, smtp_password
-         FROM b2b_clients
-         WHERE id = $1 AND deleted = false
-         LIMIT 1`,
-        [b2bId]
-    );
-}
 
 
 
@@ -287,34 +245,18 @@ async function buildAdultHealthCertPdf(id, options = {}) {
 
             // DOB / Tel
             doc.font('Times-Roman').fontSize(11).text('DOB:', left, y + 2);
-            drawUnderlineField(doc, left + 36, y, 148, formatUsDate(cert.patient_dob));
+            drawUnderlineField(doc, left + 36, y, 148, formatUsDate(cert.patient_dob), 10);
             doc.font('Times-Roman').fontSize(11).text('Tel #:', left + 198, y + 2);
-            drawUnderlineField(doc, left + 238, y, pageW - 194, cert.tel);
+            drawUnderlineField(doc, left + 238, y, 160, cert.tel, 10);
             y += rowH;
 
-            // Address with guides
+            // Address
             doc.font('Times-Roman').fontSize(11).text('Address:', left, y + 2);
-            const colGap = 8;
-            const streetW = 138;
-            const aptW = 86;
-            const cityW = 86;
-            const stateW = 52;
-            const zipW = 66;
-            let ax = left + 56;
-            drawUnderlineField(doc, ax, y, streetW, cert.street1); ax += streetW + colGap;
-            drawUnderlineField(doc, ax, y, aptW, cert.street2); ax += aptW + colGap;
-            drawUnderlineField(doc, ax, y, cityW, cert.city); ax += cityW + colGap;
-            drawUnderlineField(doc, ax, y, stateW, cert.state); ax += stateW + colGap;
-            drawUnderlineField(doc, ax, y, zipW, cert.zipcode);
-            y += 18;
-            doc.font('Times-Roman').fontSize(8).fillColor('#555');
-            ax = left + 56;
-            doc.text('Street Name/Number', ax, y, { width: streetW, align: 'center' }); ax += streetW + colGap;
-            doc.text('Apt#(if applicable)', ax, y, { width: aptW, align: 'center' }); ax += aptW + colGap;
-            doc.text('City', ax, y, { width: cityW, align: 'center' }); ax += cityW + colGap;
-            doc.text('State', ax, y, { width: stateW, align: 'center' }); ax += stateW + colGap;
-            doc.text('Zip code', ax, y, { width: zipW, align: 'center' });
-            y += 24;
+            const fullAddress = [cert.street1, cert.street2, cert.city, cert.state, cert.zipcode]
+                .filter(Boolean)
+                .join(', ');
+            drawUnderlineField(doc, left + 56, y, pageW - 56, fullAddress, 10);
+            y += 40;
 
             // Certify
             doc.fillColor('#111').font('Times-Roman').fontSize(11)

@@ -30,7 +30,8 @@ router.post('/login', async (req, res) => {
         res.setHeader('token', token);
         return resp(res, '200', {
             id: auth.user.id, name: auth.user.company_name, email: auth.user.email,
-            mobile: auth.user.mobile, portal: 'corporate', token
+            mobile: auth.user.mobile, portal: 'corporate', token,
+            b2b_client_id: auth.user.b2b_client_id || null,
         });
     } catch (err) {
         console.error(err);

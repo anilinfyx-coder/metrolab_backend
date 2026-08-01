@@ -56,16 +56,9 @@ async function resolveLabBranding(account) {
     }
 
     if (account.table === 'b2b_clients') {
-        return {
-            company_name: account.user.company_name,
-            tagline: account.user.tagline,
-            logo_file: account.user.logo_file,
-            report_header_file: account.user.report_header_file,
-            smtp_server: account.user.smtp_server,
-            smtp_port: account.user.smtp_port,
-            smtp_email: account.user.smtp_email,
-            smtp_password: account.user.smtp_password,
-        };
+        // Since B2B forgot password is an external/Metrolab-level action, use Metrolab branding & credentials
+        const { metroLabEmailLab } = require('../utils/emailBranding');
+        return metroLabEmailLab();
     }
 
     if (account.table === 'corporate_clients' && account.user.b2b_client_id) {
