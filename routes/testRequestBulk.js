@@ -103,6 +103,48 @@ router.post('/saveTestRequestInBulk', async (req, res) => {
             if (corp) b2bClientId = corp.b2b_client_id;
         }
 
+        const employeesList = Array.isArray(payload.employeesList) ? payload.employeesList : [];
+        const totalEmployees = Number(payload.totalCount || employeesList.length || 0);
+        const selectionType = payload.selectionType || '1';
+        const drugInput = Number(payload.drugCount || 0);
+        const alcoholInput = Number(payload.alcoholCount || 0);
+        let alternateCount = Number(payload.alternateCount || 0);
+
+        const resolveCount = (count, type, total) => {
+            const raw = Number(count || 0);
+            if (!Number.isFinite(raw) || raw <= 0 || total <= 0) return 0;
+            if (String(type) === '2') return Math.ceil((raw / 100) * total);
+            return Math.floor(raw);
+        };
+        const getMaxAlternate = (total, drugCount, alcoholCount, type) => {
+            if (total <= 1) return 0;
+            let remaining = 0;
+            if (String(type) === '2') {
+                const drugPct = Math.max(0, Number(drugCount || 0));
+                const alcPct = Math.max(0, Number(alcoholCount || 0));
+                const remainingPercent = Math.max(0, 100 - (drugPct + alcPct));
+                remaining = Math.floor((remainingPercent / 100) * total);
+            } else {
+                const drugC = resolveCount(drugCount, '1', total);
+                const alcC = resolveCount(alcoholCount, '1', total);
+                remaining = Math.max(0, total - Math.max(drugC, alcC));
+            }
+            let pctCap = Math.floor(total * 0.25);
+            if (total >= 2 && total <= 4) pctCap = Math.max(pctCap, 1);
+            return Math.max(0, Math.min(remaining, pctCap, total - 1));
+        };
+
+        const maxAlternate = getMaxAlternate(totalEmployees, drugInput, alcoholInput, selectionType);
+        if (alternateCount > maxAlternate) {
+            return resp(
+                res,
+                '400',
+                maxAlternate <= 0
+                    ? 'No Alternate seats available with the current Drug/Alcohol selection'
+                    : `Alternate cannot exceed ${maxAlternate} (backup pool only; for % mode, remaining after Drug% + Alcohol%)`
+            );
+        }
+
         // 1. Insert parent test_request record
         const trQuery = `
             INSERT INTO test_request (
@@ -119,11 +161,11 @@ router.post('/saveTestRequestInBulk', async (req, res) => {
             payload.frequency || '',
             payload.quarter || '',
             payload.testType || '',
-            payload.selectionType || '1',
-            payload.drugCount || 0,
-            payload.alcoholCount || 0,
-            payload.alternateCount || 0,
-            payload.totalCount || 0,
+            selectionType,
+            drugInput,
+            alcoholInput,
+            alternateCount,
+            totalEmployees,
             payload.reasonForTest || '',
             corpClientId || null,
             b2bClientId || null,
@@ -137,8 +179,8 @@ router.post('/saveTestRequestInBulk', async (req, res) => {
         }
 
         // 2. Insert into test_request_employee for each employee
-        if (payload.employeesList && payload.employeesList.length > 0) {
-            for (const emp of payload.employeesList) {
+        if (employeesList.length > 0) {
+            for (const emp of employeesList) {
                 // If they are not selected for any, we still record them as part of the total pool for this request (like old app)
                 await queryOne(`
                     INSERT INTO test_request_employee (
