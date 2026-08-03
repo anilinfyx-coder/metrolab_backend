@@ -219,20 +219,20 @@ router.get('/dashboardStats', async (req, res) => {
                         COALESCE((
                           SELECT SUM(ABS(amount))::float
                           FROM b2b_wallet_transactions
-                          WHERE UPPER(transaction_type) = 'DEBIT'
-                        ), 0) AS wallet_used`),
+                          WHERE UPPER(transaction_type) = 'CREDIT'
+                        ), 0) AS wallet_recharge`),
         ]);
 
         const subscriptionIncome = parseFloat(income?.subscription_income || 0);
-        const walletUsed = parseFloat(income?.wallet_used || 0);
+        const walletRecharge = parseFloat(income?.wallet_recharge || 0);
         
         const data = {
             total_b2b_clients: parseInt(b2b.count, 10),
             total_whitelabel_clients: parseInt(whitelabel.count, 10),
             total_corporate_clients: parseInt(corporate.count, 10),
             total_subscription_income: subscriptionIncome,
-            total_wallet_used: walletUsed,
-            total_income: subscriptionIncome + walletUsed,
+            total_wallet_recharge: walletRecharge,
+            total_income: subscriptionIncome + walletRecharge,
             total_lab_tests: parseInt(completedLabTests.count, 10),
             total_patients: parseInt(patients.count, 10),
             total_active_subscriptions: parseInt(activeSubs.count, 10),
@@ -393,10 +393,21 @@ router.get('/dashboardOverview', async (req, res) => {
                         COALESCE((
                           SELECT SUM(ABS(amount))::float
                           FROM b2b_wallet_transactions
-                          WHERE UPPER(transaction_type) = 'DEBIT'
-                        ), 0) AS wallet_used`),
+                          WHERE UPPER(transaction_type) = 'CREDIT'
+                        ), 0) AS wallet_recharge`),
             query(
                 `SELECT id, company_name, contact_person_name, mobile, email, wallet_balance, status, creation_timestamp, billing_mode,
+                        (
+                            SELECT s.amount
+                            FROM b2b_client_subscription s
+                            WHERE s.b2b_client_id = b2b_clients.id
+                              AND s.deleted = false
+                              AND s.status IS DISTINCT FROM false
+                              AND s.start_date <= CURRENT_DATE
+                              AND s.end_date >= CURRENT_DATE
+                            ORDER BY s.id DESC
+                            LIMIT 1
+                        ) AS active_subscription_amount,
                         EXISTS (
                             SELECT 1
                             FROM b2b_client_subscription s
@@ -509,8 +520,8 @@ router.get('/dashboardOverview', async (req, res) => {
                 total_whitelabel_clients: parseInt(whitelabel?.count || 0, 10),
                 total_corporate_clients: parseInt(corporate?.count || 0, 10),
                 total_subscription_income: parseFloat(income?.subscription_income || 0),
-                total_wallet_used: parseFloat(income?.wallet_used || 0),
-                total_income: parseFloat(income?.subscription_income || 0) + parseFloat(income?.wallet_used || 0),
+                total_wallet_recharge: parseFloat(income?.wallet_recharge || 0),
+                total_income: parseFloat(income?.subscription_income || 0) + parseFloat(income?.wallet_recharge || 0),
                 total_lab_tests: parseInt(completedLabTests?.count || 0, 10),
                 total_patients: parseInt(patients?.count || 0, 10),
                 total_active_subscriptions: parseInt(activeSubsCount?.count || 0, 10),
