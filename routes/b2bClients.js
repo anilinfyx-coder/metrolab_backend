@@ -274,7 +274,14 @@ router.get('/', async (req, res) => {
                          AND s.status IS DISTINCT FROM false
                          AND s.start_date <= CURRENT_DATE
                          AND s.end_date >= CURRENT_DATE
-                   ) AS has_active_subscription
+                   ) AS has_active_subscription,
+                   COALESCE(
+                       (SELECT SUM(amount)
+                        FROM b2b_wallet_transactions
+                        WHERE b2b_client_id = b.id
+                          AND UPPER(transaction_type) = 'CREDIT'),
+                       0
+                   ) AS wallet_total_recharged
             FROM b2b_clients b ${whereClause} ORDER BY b.id DESC LIMIT 1000`);
         return resp(res, '200', rows);
     } catch (err) { return resp(res, '500', err.message); }

@@ -416,7 +416,14 @@ router.get('/dashboardOverview', async (req, res) => {
                               AND s.status IS DISTINCT FROM false
                               AND s.start_date <= CURRENT_DATE
                               AND s.end_date >= CURRENT_DATE
-                        ) AS has_active_subscription
+                        ) AS has_active_subscription,
+                        COALESCE(
+                            (SELECT SUM(amount)
+                             FROM b2b_wallet_transactions
+                             WHERE b2b_client_id = b2b_clients.id
+                               AND UPPER(transaction_type) = 'CREDIT'),
+                            0
+                        ) AS wallet_total_recharged
                  FROM b2b_clients
                  WHERE deleted = false
                  ORDER BY creation_timestamp DESC NULLS LAST, id DESC
