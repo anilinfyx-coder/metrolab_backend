@@ -92,7 +92,7 @@ router.get('/whitelabelConfig', async (req, res) => {
         if (!domain) return resp(res, '400', 'Domain is required');
 
         const client = await queryOne(
-            `SELECT id, company_name, logo_file, primary_color_code, custom_domain 
+            `SELECT id, company_name, logo_file, primary_color_code, custom_domain, tagline 
              FROM b2b_clients 
              WHERE custom_domain = $1 AND deleted = false LIMIT 1`,
             [domain]
@@ -114,7 +114,8 @@ router.get('/whitelabelConfig', async (req, res) => {
             primary_color_code: client.primary_color_code,
             logo_file: client.logo_file,
             logo_url: logo_url,
-            custom_domain: client.custom_domain
+            custom_domain: client.custom_domain,
+            tagline: client.tagline
         });
     } catch (err) {
         console.error(err);
