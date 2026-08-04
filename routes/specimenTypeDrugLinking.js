@@ -92,8 +92,9 @@ router.post('/', async (req, res) => {
              WHERE deleted = false
                AND specimen_type_id = $1
                AND lab_test_id IS NOT DISTINCT FROM $2
+               AND b2b_client_id IS NOT DISTINCT FROM $3
              LIMIT 1`,
-            [specimen_type_id, lab_test_id || null]
+            [specimen_type_id, lab_test_id || null, b2b_client_id || null]
         );
         if (existing) {
             return resp(res, '400', 'This specimen type is already linked to this lab test');
