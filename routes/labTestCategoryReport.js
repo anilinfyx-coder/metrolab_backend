@@ -70,7 +70,7 @@ router.get('/', async (req, res) => {
             dataSql,
             countSql,
             params: values,
-            orderBy: 'ORDER BY r.id DESC',
+            orderBy: 'ORDER BY r.creation_timestamp DESC, r.id DESC',
             defaultLimit: 25,
         });
     } catch (err) {

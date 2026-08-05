@@ -107,6 +107,12 @@ function formatCutoff(value, unit) {
     return `${value}${unitText}`;
 }
 
+function formatAppliedToArm(value) {
+    if (String(value) === '0') return 'Right Arm';
+    if (String(value) === '1') return 'Left Arm';
+    return value;
+}
+
 function buildPatientAddress(report) {
     const parts = [];
     if (report.patient_street1) parts.push(String(report.patient_street1).trim());
@@ -259,7 +265,19 @@ async function loadLabTestReportBundle(reportId) {
         ));
     }
 
-    return { report, b2b, parameters, labTest, b2bClientId };
+    const { rows: questions } = await query(
+        `SELECT rq.id,
+                rq.question_text as question,
+                TRIM(COALESCE(a.value, '')) as answer
+         FROM report_questions rq
+         LEFT JOIN lab_test_category_report_question_answer a 
+           ON a.report_questions_id = rq.id AND a.lab_test_category_report_id = $1
+         WHERE rq.lab_test_id = $2 AND rq.deleted = false
+         ORDER BY rq.id ASC`,
+        [reportId, report.lab_test_id]
+    );
+
+    return { report, b2b, parameters, labTest, b2bClientId, questions };
 }
 
 async function resolveReportLogoPath(b2b) {
@@ -557,6 +575,63 @@ function drawDrugsTestedSection(doc, bundle, startY) {
     return y + PAGE.sectionGap;
 }
 
+function drawQuestionsSection(doc, bundle, startY) {
+    const { questions } = bundle;
+    const left = PAGE.left;
+    const right = pageRight(doc);
+    const contentWidth = right - left;
+    let y = startY;
+
+    if (!questions || questions.length === 0) return startY;
+
+    doc.moveTo(left, y).lineTo(right, y).strokeColor('#000').lineWidth(1).stroke();
+    y += 9;
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#111')
+        .text('Questions', left, y, { width: contentWidth, align: 'center' });
+    y += 15;
+    doc.moveTo(left, y).lineTo(right, y).strokeColor('#000').lineWidth(1).stroke();
+    y += 6;
+
+    const qW = contentWidth - 60;
+    const aW = 60;
+
+    const rowH = 22;
+    const bottomLimit = () => doc.page.height - 48;
+
+    questions.forEach((q) => {
+        let displayAnswer = q.answer || '—';
+        if (displayAnswer === '1') displayAnswer = 'Yes';
+        if (displayAnswer === '0') displayAnswer = 'No';
+
+        const textH = Math.ceil(doc.heightOfString(q.question || '—', { width: qW - 6 }));
+        const needed = Math.max(rowH, textH + 10);
+        
+        if (y + needed > bottomLimit()) {
+            doc.addPage();
+            y = 40;
+        }
+        
+        doc.font('Helvetica-Bold').fontSize(9).fillColor('#111')
+            .text(q.question || '—', left + 3, y + 5, {
+                width: qW - 6,
+                lineBreak: true,
+            });
+            
+        doc.font('Helvetica').fontSize(9).fillColor('#111')
+            .text(displayAnswer, left + qW + 3, y + 5, {
+                width: aW - 6,
+                lineBreak: false,
+                ellipsis: true,
+            });
+            
+        y += needed;
+        doc.moveTo(left, y).lineTo(right, y).strokeColor('#dddddd').lineWidth(0.4).stroke();
+    });
+
+    doc.moveTo(left, y).lineTo(right, y).strokeColor('#000').lineWidth(0.7).stroke();
+    return y + PAGE.sectionGap;
+}
+
 function drawMroSection(doc, bundle, startY) {
     const { report, labTest } = bundle;
     const left = PAGE.left;
@@ -566,7 +641,7 @@ function drawMroSection(doc, bundle, startY) {
     const mroFields = [
         { flag: 'show_final_result', label: 'Final Result :', value: formatFinalResult(report.final_result) },
         { flag: 'show_test_remark', label: 'Remark :', value: report.test_remark },
-        { flag: 'show_final_result_disposition', label: 'Final Result Disposition:', value: report.final_result_disposition },
+        { flag: 'show_final_result_disposition', label: 'Final Result Disposition:', value: formatFinalResult(report.final_result_disposition) },
         { flag: 'show_final_remark', label: 'Final Remark:', value: report.final_remark },
     ].filter((f) => showFlag(labTest, f.flag));
 
@@ -616,7 +691,7 @@ function drawAdditionalDetailsSection(doc, bundle, startY) {
         { flag: 'show_fasting', label: 'Fasting:', value: report.fasting === '1' ? 'Yes' : report.fasting === '2' ? 'No' : report.fasting },
         { flag: 'show_requisition_no', label: 'Requisition No:', value: report.requisition_no },
         { flag: 'show_date_administered', label: 'Date Administered:', value: formatUsDate(report.date_administered) },
-        { flag: 'show_applied_to', label: 'Applied To:', value: report.applied_to_arm },
+        { flag: 'show_applied_to', label: 'Applied To:', value: formatAppliedToArm(report.applied_to_arm) },
         { flag: 'show_lot', label: 'Lot:', value: report.lot },
         { flag: 'show_expire_date', label: 'Exp. Date:', value: formatUsDate(report.expiry_date) },
         { flag: 'show_date_read', label: 'Date Read:', value: formatUsDate(report.date_read) },
@@ -723,6 +798,7 @@ async function generatePlainLabTestReportPdf(bundle) {
             y = drawSpecimenSection(doc, assets, y);
             y = drawPatientSection(doc, assets, y);
             y = drawAdditionalDetailsSection(doc, assets, y);
+            y = drawQuestionsSection(doc, assets, y);
             y = drawDrugsTestedSection(doc, assets, y);
             y = drawMroSection(doc, assets, y);
             drawReportFooter(doc, assets, y);
