@@ -63,7 +63,7 @@ async function resolveLabBranding(account) {
 
     if (account.table === 'corporate_clients' && account.user.b2b_client_id) {
         return queryOne(
-            `SELECT company_name, tagline, logo_file, report_header_file, smtp_server, smtp_port, smtp_email, smtp_password, custom_domain
+            `SELECT company_name, tagline, logo_file, favicon_file, report_header_file, smtp_server, smtp_port, smtp_email, smtp_password, custom_domain
              FROM b2b_clients WHERE id = $1 AND deleted = false LIMIT 1`,
             [account.user.b2b_client_id]
         );
@@ -71,7 +71,7 @@ async function resolveLabBranding(account) {
 
     if (account.table === 'admin_users' && account.user.user_id) {
         return queryOne(
-            `SELECT company_name, tagline, logo_file, report_header_file, smtp_server, smtp_port, smtp_email, smtp_password, custom_domain
+            `SELECT company_name, tagline, logo_file, favicon_file, report_header_file, smtp_server, smtp_port, smtp_email, smtp_password, custom_domain
              FROM b2b_clients WHERE id = $1 AND deleted = false LIMIT 1`,
             [account.user.user_id]
         );
@@ -172,7 +172,7 @@ router.post('/login', async (req, res) => {
                 let b2bBranding = null;
                 if (user.user_id) {
                     b2bBranding = await queryOne(
-                        `SELECT company_name, tagline, logo_file, report_header_file, smtp_server, smtp_port, smtp_email, smtp_password, custom_domain FROM b2b_clients WHERE id = $1 AND deleted = false LIMIT 1`,
+                        `SELECT company_name, tagline, logo_file, favicon_file, report_header_file, smtp_server, smtp_port, smtp_email, smtp_password, custom_domain FROM b2b_clients WHERE id = $1 AND deleted = false LIMIT 1`,
                         [user.user_id]
                     );
                 }
@@ -186,6 +186,7 @@ router.post('/login', async (req, res) => {
                     company_name: b2bBranding?.company_name || null,
                     tagline: b2bBranding?.tagline || null,
                     logo_file: b2bBranding?.logo_file || null,
+                    favicon_file: b2bBranding?.favicon_file || null,
                 };
             } else if (table === 'b2b_clients') {
                 portal = 'b2b';
@@ -197,7 +198,9 @@ router.post('/login', async (req, res) => {
                     role: user.role_id,
                     portal,
                     logo_file: user.logo_file || null,
+                    favicon_file: user.favicon_file || null,
                     tagline: user.tagline || null,
+                    is_corporate_enabled: typeof user.is_corporate_enabled === 'boolean' ? user.is_corporate_enabled : true,
                 };
             } else {
                 portal = 'corporate';

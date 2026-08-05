@@ -86,7 +86,7 @@ router.get('/', async (req, res) => {
             dataSql,
             countSql,
             params,
-            orderBy: 'ORDER BY wl.id DESC',
+            orderBy: 'ORDER BY wl.creation_timestamp DESC, wl.id DESC',
             legacyLimit: 1000,
             defaultLimit: 10,
             mapRow: decryptPIIFields,

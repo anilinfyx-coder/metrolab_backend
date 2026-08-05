@@ -20,6 +20,7 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 const uploadFields = upload.fields([
     { name: 'logo_file', maxCount: 1 },
+    { name: 'favicon_file', maxCount: 1 },
     { name: 'report_header_file', maxCount: 1 },
     { name: 'report_footer_file', maxCount: 1 },
     { name: 'medical_officer_signature_file', maxCount: 1 }
@@ -92,7 +93,7 @@ router.get('/whitelabelConfig', async (req, res) => {
         if (!domain) return resp(res, '400', 'Domain is required');
 
         const client = await queryOne(
-            `SELECT id, company_name, logo_file, primary_color_code, custom_domain, tagline 
+            `SELECT id, company_name, logo_file, favicon_file, primary_color_code, custom_domain, tagline 
              FROM b2b_clients 
              WHERE custom_domain = $1 AND deleted = false LIMIT 1`,
             [domain]
@@ -101,10 +102,12 @@ router.get('/whitelabelConfig', async (req, res) => {
 
         // Optional: generate signed url for logo if needed
         let logo_url = null;
-        if (client.logo_file) {
+        let favicon_url = null;
+        if (client.logo_file || client.favicon_file) {
             const { isGcsConfigured, getSignedUrl } = require('../utils/gcs');
             if (isGcsConfigured()) {
-                logo_url = await getSignedUrl(GCS_PREFIX + client.logo_file);
+                if (client.logo_file) logo_url = await getSignedUrl(GCS_PREFIX + client.logo_file);
+                if (client.favicon_file) favicon_url = await getSignedUrl(GCS_PREFIX + client.favicon_file);
             }
         }
 
@@ -114,6 +117,8 @@ router.get('/whitelabelConfig', async (req, res) => {
             primary_color_code: client.primary_color_code,
             logo_file: client.logo_file,
             logo_url: logo_url,
+            favicon_file: client.favicon_file,
+            favicon_url: favicon_url,
             custom_domain: client.custom_domain,
             tagline: client.tagline
         });
@@ -328,6 +333,7 @@ router.post('/', uploadFields, async (req, res) => {
 
         const uploaded = await persistUploadedFiles(req.files);
         if (uploaded.logo_file) body.logo_file = uploaded.logo_file;
+        if (uploaded.favicon_file) body.favicon_file = uploaded.favicon_file;
         if (uploaded.report_header_file) body.report_header_file = uploaded.report_header_file;
         if (uploaded.report_footer_file) body.report_footer_file = uploaded.report_footer_file;
         if (uploaded.medical_officer_signature_file) body.medical_officer_signature_file_name = uploaded.medical_officer_signature_file;
@@ -336,11 +342,11 @@ router.post('/', uploadFields, async (req, res) => {
             role_id, company_name, contact_person_name, mobile, public_phone_no,
             email, public_email, public_fax, address, country_id, state_id, city_id,
             district_id, region_id, pincode, support_mobile, support_email, support_person_name,
-            password, tagline, logo_file, report_header_file, report_footer_file,
+            password, tagline, logo_file, favicon_file, report_header_file, report_footer_file,
             primary_color_code, website, medical_officer_name, mrocc, clia_number,
             medical_officer_position, medical_officer_signature_file_name,
             is_approval, approval_note, smtp_server, smtp_port, smtp_email, smtp_password,
-            user_id, role_type_id, is_fixed_price, fixed_price_amount, custom_domain
+            user_id, role_type_id, is_fixed_price, fixed_price_amount, custom_domain, is_corporate_enabled
         } = body;
 
         const emailCheck = await validateUniqueLoginEmail(email);
@@ -358,24 +364,24 @@ router.post('/', uploadFields, async (req, res) => {
                 role_id, company_name, contact_person_name, mobile, public_phone_no,
                 email, public_email, public_fax, address, country_id, state_id, city_id,
                 district_id, region_id, pincode, support_mobile, support_email, support_person_name,
-                password, tagline, logo_file, report_header_file, report_footer_file,
+                password, tagline, logo_file, favicon_file, report_header_file, report_footer_file,
                 primary_color_code, website, medical_officer_name, mrocc, clia_number,
                 medical_officer_position, medical_officer_signature_file_name,
                 is_approval, approval_note, smtp_server, smtp_port, smtp_email, smtp_password,
-                user_id, role_type_id, status, deleted, is_fixed_price, fixed_price_amount, custom_domain
+                user_id, role_type_id, status, deleted, is_fixed_price, fixed_price_amount, custom_domain, is_corporate_enabled
             ) VALUES (
                 $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
                 $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,
-                $37,$38,true,false,$39,$40,$41
+                $37,$38,true,false,$39,$40,$41,$42,COALESCE($43, true)
             ) RETURNING *`,
             [role_id, company_name, contact_person_name, mobile, public_phone_no,
                 normalizeLoginEmail(email), public_email, public_fax, address, country_id, state_id, city_id,
                 district_id, region_id, pincode, support_mobile, support_email, support_person_name,
-                password, tagline, logo_file, report_header_file, report_footer_file,
+                password, tagline, logo_file, favicon_file, report_header_file, report_footer_file,
                 primary_color_code, website, medical_officer_name, mrocc, clia_number,
                 medical_officer_position, medical_officer_signature_file_name,
                 is_approval, approval_note, smtp_server, smtp_port, smtp_email, smtp_password,
-                user_id, role_type_id, is_fixed_price || false, fixed_price_amount || 0, custom_domain || null]
+                user_id, role_type_id, is_fixed_price || false, fixed_price_amount || 0, custom_domain || null, is_corporate_enabled]
         );
 
         if (row && row.email) {
@@ -455,11 +461,11 @@ router.get('/:id', async (req, res) => {
         const row = await queryOne(
             `SELECT id, role_id, company_name, contact_person_name, mobile, public_phone_no,
                     email, public_email, public_fax, address, country_id, state_id, city_id,
-                    support_mobile, support_email, support_person_name, tagline, logo_file,
+                    support_mobile, support_email, support_person_name, tagline, logo_file, favicon_file,
                     primary_color_code, website, smtp_server, smtp_port, smtp_email, smtp_password,
                     status, deleted, wallet_balance, is_fixed_price, fixed_price_amount,
                     pincode, medical_officer_name, medical_officer_position, mrocc, clia_number,
-                    is_approval, approval_note, custom_domain, billing_mode
+                    is_approval, approval_note, custom_domain, billing_mode, is_corporate_enabled
              FROM b2b_clients WHERE id = $1 LIMIT 1`,
             [req.params.id]
         );
@@ -498,6 +504,7 @@ router.put('/:id', uploadFields, async (req, res) => {
 
         const uploaded = await persistUploadedFiles(req.files);
         if (uploaded.logo_file) body.logo_file = uploaded.logo_file;
+        if (uploaded.favicon_file) body.favicon_file = uploaded.favicon_file;
         if (uploaded.report_header_file) body.report_header_file = uploaded.report_header_file;
         if (uploaded.report_footer_file) body.report_footer_file = uploaded.report_footer_file;
         if (uploaded.medical_officer_signature_file) body.medical_officer_signature_file_name = uploaded.medical_officer_signature_file;
@@ -525,9 +532,9 @@ router.put('/:id', uploadFields, async (req, res) => {
             'support_person_name', 'support_mobile', 'support_email',
             'tagline', 'primary_color_code', 'website',
             'medical_officer_name', 'medical_officer_position', 'mrocc', 'clia_number',
-            'logo_file', 'report_header_file', 'report_footer_file', 'medical_officer_signature_file_name',
+            'logo_file', 'favicon_file', 'report_header_file', 'report_footer_file', 'medical_officer_signature_file_name',
             'smtp_server', 'smtp_port', 'smtp_email', 'smtp_password',
-            'is_approval', 'approval_note', 'status', 'is_fixed_price', 'fixed_price_amount', 'custom_domain'
+            'is_approval', 'approval_note', 'status', 'is_fixed_price', 'fixed_price_amount', 'custom_domain', 'is_corporate_enabled'
         ];
 
         const updates = [];
@@ -563,7 +570,7 @@ router.put('/:id', uploadFields, async (req, res) => {
                        email, public_email, public_fax, address, country_id, state_id, city_id,
                        support_mobile, support_email, support_person_name, tagline, primary_color_code,
                        website, smtp_server, smtp_port, smtp_email, smtp_password, status, deleted,
-                       is_fixed_price, fixed_price_amount`,
+                       is_fixed_price, fixed_price_amount, logo_file, favicon_file, is_corporate_enabled`,
             values
         );
         if (!row) return resp(res, '404', 'B2B Client not found');

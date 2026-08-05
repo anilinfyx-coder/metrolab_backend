@@ -20,6 +20,14 @@ router.get('/', async (req, res) => {
             values.push(req.query.patient_id);
             whereClause += ` AND ahc.patient_id = $${values.length}`;
         }
+        if (req.query.waiting_list_id) {
+            values.push(req.query.waiting_list_id);
+            whereClause += ` AND ahc.waiting_list_id = $${values.length}`;
+        }
+        if (req.query.lab_test_id) {
+            values.push(req.query.lab_test_id);
+            whereClause += ` AND ahc.lab_test_id = $${values.length}`;
+        }
 
         const { resolveAdminContext } = require('../utils/adminContext');
         if (req.user && req.user.portal === 'b2b') {
@@ -104,7 +112,8 @@ router.post('/', async (req, res) => {
             patient_id, free_from_disease, satisfactory_physical, tuberculin_test_type,
             tuberculin_date_planted, tuberculin_date_read, tuberculin_result,
             chest_xray_date, chest_xray_result, additional_info, clinician_name,
-            date_of_examination, clinician_address, clinician_specialty
+            date_of_examination, clinician_address, clinician_specialty,
+            waiting_list_id, lab_test_id
         } = req.body;
 
         const row = await queryOne(`
@@ -112,16 +121,48 @@ router.post('/', async (req, res) => {
                 patient_id, free_from_disease, satisfactory_physical, tuberculin_test_type,
                 tuberculin_date_planted, tuberculin_date_read, tuberculin_result,
                 chest_xray_date, chest_xray_result, additional_info, clinician_name,
-                date_of_examination, clinician_address, clinician_specialty
+                date_of_examination, clinician_address, clinician_specialty,
+                waiting_list_id, lab_test_id
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
             ) RETURNING *
         `, [
             patient_id, free_from_disease || false, satisfactory_physical || false, tuberculin_test_type,
             tuberculin_date_planted || null, tuberculin_date_read || null, tuberculin_result,
             chest_xray_date || null, chest_xray_result, additional_info, clinician_name,
-            date_of_examination || null, clinician_address, clinician_specialty || null
+            date_of_examination || null, clinician_address, clinician_specialty || null,
+            waiting_list_id || null, lab_test_id || null
         ]);
+
+        if (waiting_list_id && lab_test_id) {
+            const wl = await queryOne('SELECT b2b_client_id, corporate_client_id FROM waiting_list WHERE id = $1', [waiting_list_id]);
+            const resolvedB2bId = wl ? wl.b2b_client_id : null;
+            const resolvedCorporateId = wl ? wl.corporate_client_id : null;
+
+            const lastUidRow = await queryOne(
+                `SELECT uid FROM lab_test_category_report
+                 WHERE uid ~ '^LTCR[0-9]+$'
+                 ORDER BY CAST(SUBSTRING(uid FROM 5) AS INTEGER) DESC
+                 LIMIT 1`
+            );
+            let nextNum = 1;
+            if (lastUidRow?.uid) {
+                const parsed = parseInt(String(lastUidRow.uid).slice(4), 10);
+                if (!Number.isNaN(parsed)) nextNum = parsed + 1;
+            }
+            const reportUid = `LTCR${String(nextNum).padStart(4, '0')}`;
+
+            await query(
+                `INSERT INTO lab_test_category_report (
+                    uid, waiting_list_id, lab_test_id, patient_id, 
+                    b2b_client_id, corporate_client_id, 
+                    report_status, final_result, deleted, creation_timestamp, status
+                 )
+                 VALUES ($1, $2, $3, $4, $5, $6, 'Completed', 'Custom Certificate', false, NOW(), false)
+                 ON CONFLICT DO NOTHING`,
+                [reportUid, waiting_list_id, lab_test_id, patient_id, resolvedB2bId, resolvedCorporateId]
+            );
+        }
 
         return resp(res, '200', row);
     } catch (err) {
