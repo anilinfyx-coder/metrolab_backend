@@ -122,15 +122,18 @@ router.post('/getLabTestCategoryReportDetails', async (req, res) => {
         const { id } = req.body;
 
         const report = await queryOne(`
-            SELECT r.*, l.name as lab_test_name
+            SELECT r.*, l.name as lab_test_name, w.patient_id as wl_patient_id
             FROM lab_test_category_report r
             LEFT JOIN lab_tests l ON r.lab_test_id = l.id
+            LEFT JOIN waiting_list w ON r.waiting_list_id = w.id
             WHERE r.id = $1
         `, [id]);
 
         if (!report) {
             return res.status(404).json({ response_code: '404', obj: 'Report not found' });
         }
+
+        report.patient_id = report.patient_id || report.wl_patient_id;
 
         if (!report.reason_for_test && report.waiting_list_id) {
             const wl = await queryOne(
@@ -488,6 +491,34 @@ router.post('/downloadLabTestCategoryReport', async (req, res) => {
         const { id } = req.body;
         if (!id) return res.status(400).json({ response_code: '400', obj: 'Report id is required' });
 
+        const reportRow = await queryOne(`
+            SELECT r.waiting_list_id, r.lab_test_id, l.name as lab_test_name 
+            FROM lab_test_category_report r
+            LEFT JOIN lab_tests l ON r.lab_test_id = l.id
+            WHERE r.id = $1
+        `, [id]);
+        
+        if (reportRow && reportRow.lab_test_name) {
+            const testName = reportRow.lab_test_name.toLowerCase();
+            if (testName.includes('adult health certificate')) {
+                const ahc = await queryOne('SELECT id FROM adult_health_certificates WHERE waiting_list_id = $1 AND lab_test_id = $2', [reportRow.waiting_list_id, reportRow.lab_test_id]);
+                if (!ahc) throw new Error("Please edit and save the Adult Health Certificate details first.");
+                const { buildAdultHealthCertForDelivery } = require('../utils/certPdfDelivery');
+                const pdf = await buildAdultHealthCertForDelivery(ahc.id, req.user);
+                res.setHeader('Content-Type', 'application/pdf');
+                res.setHeader('Content-Disposition', `attachment; filename=${pdf.filename}`);
+                return res.send(pdf.buffer);
+            } else if (testName.includes('physical examination')) {
+                const pec = await queryOne('SELECT id FROM physical_examination_certificates WHERE waiting_list_id = $1 AND lab_test_id = $2', [reportRow.waiting_list_id, reportRow.lab_test_id]);
+                if (!pec) throw new Error("Please edit and save the Physical Examination details first.");
+                const { buildPhysicalExamCertForDelivery } = require('../utils/certPdfDelivery');
+                const pdf = await buildPhysicalExamCertForDelivery(pec.id, req.user);
+                res.setHeader('Content-Type', 'application/pdf');
+                res.setHeader('Content-Disposition', `attachment; filename=${pdf.filename}`);
+                return res.send(pdf.buffer);
+            }
+        }
+
         const pdf = await buildLabTestReportForDelivery(id, req.user);
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', `attachment; filename=${pdf.filename}`);
@@ -508,6 +539,51 @@ router.post('/emailLabTestCategoryReport', async (req, res) => {
         const { sendLabTestCategoryReportMail } = require('../utils/emailService');
         const { id } = req.body;
         if (!id) return resp(res, '400', 'Report id is required');
+
+        const reportRow = await queryOne(`
+            SELECT r.waiting_list_id, r.lab_test_id, l.name as lab_test_name 
+            FROM lab_test_category_report r
+            LEFT JOIN lab_tests l ON r.lab_test_id = l.id
+            WHERE r.id = $1
+        `, [id]);
+
+        if (reportRow && reportRow.lab_test_name) {
+            const testName = reportRow.lab_test_name.toLowerCase();
+            if (testName.includes('adult health certificate') || testName.includes('physical examination')) {
+                let pdf, certName;
+                if (testName.includes('adult health certificate')) {
+                    const ahc = await queryOne('SELECT id FROM adult_health_certificates WHERE waiting_list_id = $1 AND lab_test_id = $2', [reportRow.waiting_list_id, reportRow.lab_test_id]);
+                    if (!ahc) throw new Error("Please edit and save the Adult Health Certificate details first.");
+                    const { buildAdultHealthCertForDelivery } = require('../utils/certPdfDelivery');
+                    pdf = await buildAdultHealthCertForDelivery(ahc.id, req.user);
+                    certName = 'Adult Health Certificate';
+                } else {
+                    const pec = await queryOne('SELECT id FROM physical_examination_certificates WHERE waiting_list_id = $1 AND lab_test_id = $2', [reportRow.waiting_list_id, reportRow.lab_test_id]);
+                    if (!pec) throw new Error("Please edit and save the Physical Examination details first.");
+                    const { buildPhysicalExamCertForDelivery } = require('../utils/certPdfDelivery');
+                    pdf = await buildPhysicalExamCertForDelivery(pec.id, req.user);
+                    certName = 'Physical Examination Certificate';
+                }
+                
+                const to = (pdf.cert.patient_email || '').trim();
+                if (!to) return resp(res, '400', 'No email address found for this patient');
+
+                const { sendCertificateMail } = require('../utils/emailService');
+                const ok = await sendCertificateMail(
+                    to,
+                    pdf.cert.patient_name,
+                    certName,
+                    pdf.buffer,
+                    pdf.filename,
+                    pdf.lab || pdf.b2b
+                );
+
+                if (!ok) return resp(res, '500', 'Failed to send email via SMTP');
+                
+                await queryOne(`UPDATE lab_test_category_report SET is_email_send = true WHERE id = $1`, [id]).catch(() => null);
+                return resp(res, '200', { message: 'Report emailed successfully', email: to });
+            }
+        }
 
         const pdf = await buildLabTestReportForDelivery(id, req.user);
         const to = (pdf.report.patient_email || '').trim();

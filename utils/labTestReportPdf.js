@@ -822,6 +822,46 @@ async function buildLabTestReportPdf(reportId, { encrypt = true, authUser } = {}
         throw err;
     }
 
+    const testName = (bundle.labTest?.name || bundle.labTest?.test_name || bundle.report?.lab_test_name || '').toLowerCase();
+    
+    // Intercept custom certificates
+    if (testName === 'adult health certificate (tb)') {
+        const customCert = await queryOne(`SELECT id FROM adult_health_certificates WHERE waiting_list_id = $1 AND lab_test_id = $2 LIMIT 1`, [bundle.report.waiting_list_id, bundle.report.lab_test_id]);
+        if (customCert) {
+            const { buildAdultHealthCertForDelivery } = require('./certPdfDelivery');
+            const pdfData = await buildAdultHealthCertForDelivery(customCert.id, authUser);
+            // Re-encrypt since it expects { buffer, filename, password, report... }
+            const password = buildBirthdatePassword(bundle.report.patient_dob);
+            let buffer = pdfData.buffer;
+            if (encrypt && password) buffer = encryptPdfBuffer(buffer, password);
+            return {
+                buffer,
+                filename: `${bundle.report.uid || `Report-${bundle.report.id}`}.pdf`,
+                password: encrypt ? password : null,
+                report: bundle.report,
+                b2b: bundle.b2b,
+                lab: bundle.b2b,
+            };
+        }
+    } else if (testName === 'physical examination certificate') {
+        const customCert = await queryOne(`SELECT id FROM physical_examination_certificates WHERE waiting_list_id = $1 AND lab_test_id = $2 LIMIT 1`, [bundle.report.waiting_list_id, bundle.report.lab_test_id]);
+        if (customCert) {
+            const { buildPhysicalExamCertForDelivery } = require('./certPdfDelivery');
+            const pdfData = await buildPhysicalExamCertForDelivery(customCert.id, authUser);
+            const password = buildBirthdatePassword(bundle.report.patient_dob);
+            let buffer = pdfData.buffer;
+            if (encrypt && password) buffer = encryptPdfBuffer(buffer, password);
+            return {
+                buffer,
+                filename: `${bundle.report.uid || `Report-${bundle.report.id}`}.pdf`,
+                password: encrypt ? password : null,
+                report: bundle.report,
+                b2b: bundle.b2b,
+                lab: bundle.b2b,
+            };
+        }
+    }
+
     const patientB2b = bundle.b2bClientId || bundle.report.patient_b2b_client_id;
     const brandingLab = await resolveCertLabBranding(authUser, patientB2b);
     if (brandingLab) {
