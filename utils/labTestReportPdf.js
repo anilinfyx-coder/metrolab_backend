@@ -10,6 +10,7 @@ const {
 } = require('./labTestDisplayOptions');
 const {
     resolveUploadedFilePath,
+    resolveLabLogoPath,
 } = require('./uploadedFiles');
 const { PREFIX } = require('./gcs');
 const { buildEffectiveParamsCte, buildParameterValueLateralJoin } = require('./reportRequestParameters');
@@ -281,7 +282,9 @@ async function loadLabTestReportBundle(reportId) {
 }
 
 async function resolveReportLogoPath(b2b) {
-    return resolveCertLogoPath(b2b);
+    // Use resolveLabLogoPath which handles GCS download, skips .webp,
+    // and falls back to the default MetroLab logo when b2b has no logo.
+    return resolveLabLogoPath(b2b);
 }
 
 /** Page layout constants — even spacing + aligned columns. */
