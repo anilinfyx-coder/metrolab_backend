@@ -11,6 +11,74 @@ const { respondListQuery } = require('../utils/pagination');
 
 router.use(authMiddleware);
 
+router.get('/sidebarBadgeCounts', async (req, res) => {
+    try {
+        let values = [];
+        let isCorporateEnabled = true;
+        let trWhereClause = "t.deleted = false AND EXISTS ( SELECT 1 FROM test_request_employee tre WHERE tre.test_request_id = t.id AND tre.deleted = false AND tre.status IS DISTINCT FROM false AND (tre.is_selected_for_drug = true OR tre.is_selected_for_alcohol = true OR tre.is_selected_for_alternate = true) AND NOT EXISTS ( SELECT 1 FROM waiting_list wl WHERE wl.employee_id = tre.employee_id AND wl.requisition_no = CONCAT('TR-', tre.test_request_id, '-E-', tre.employee_id) AND wl.deleted = false ) )";
+        let wlWhereClause = "wl.deleted = false AND EXISTS ( SELECT 1 FROM waiting_test_lab_test wtl2 WHERE wtl2.waiting_list_id = wl.id AND wtl2.deleted = false AND NOT EXISTS ( SELECT 1 FROM lab_test_category_report r WHERE r.waiting_list_id = wl.id AND r.lab_test_id = wtl2.lab_test_id AND r.deleted = false ) )";
+        let todaysPatientsWhere = "deleted = false AND DATE(creation_timestamp) = CURRENT_DATE";
+        let todaysReportsWhere = "deleted = false AND DATE(creation_timestamp) = CURRENT_DATE";
+
+        if (req.user && req.user.portal === 'b2b') {
+            values.push(req.user.id);
+            trWhereClause += ` AND t.b2b_client_id = $1`;
+            wlWhereClause += ` AND wl.b2b_client_id = $1`;
+            todaysPatientsWhere += ` AND b2b_client_id = $1`;
+            todaysReportsWhere += ` AND b2b_client_id = $1`;
+            
+            const b2bClient = await queryOne(`SELECT is_corporate_enabled FROM b2b_clients WHERE id = $1`, [req.user.id]);
+            if (b2bClient && b2bClient.is_corporate_enabled === false) {
+                isCorporateEnabled = false;
+            }
+        } else if (req.user && req.user.portal === 'corporate') {
+            values.push(req.user.id);
+            trWhereClause += ` AND t.corporate_client_id = $1`;
+            wlWhereClause += ` AND wl.corporate_client_id = $1`;
+            todaysPatientsWhere += ` AND corporate_client_id = $1`;
+            todaysReportsWhere += ` AND corporate_client_id = $1`;
+        } else if (req.user && req.user.portal === 'admin') {
+            const ctx = await resolveAdminContext(req.user.id);
+            if (ctx.b2b_client_id) {
+                values.push(ctx.b2b_client_id);
+                trWhereClause += ` AND t.b2b_client_id = $1`;
+                wlWhereClause += ` AND wl.b2b_client_id = $1`;
+                todaysPatientsWhere += ` AND b2b_client_id = $1`;
+                todaysReportsWhere += ` AND b2b_client_id = $1`;
+                
+                const b2bClient = await queryOne(`SELECT is_corporate_enabled FROM b2b_clients WHERE id = $1`, [ctx.b2b_client_id]);
+                if (b2bClient && b2bClient.is_corporate_enabled === false) {
+                    isCorporateEnabled = false;
+                }
+            } else if (ctx.corporate_client_id) {
+                values.push(ctx.corporate_client_id);
+                trWhereClause += ` AND t.corporate_client_id = $1`;
+                wlWhereClause += ` AND wl.corporate_client_id = $1`;
+                todaysPatientsWhere += ` AND corporate_client_id = $1`;
+                todaysReportsWhere += ` AND corporate_client_id = $1`;
+            }
+        }
+
+        const [trResult, wlResult, tpResult, tcResult] = await Promise.all([
+            queryOne(`SELECT COUNT(*)::int AS total FROM test_request t WHERE ${trWhereClause}`, values),
+            queryOne(`SELECT COUNT(*)::int AS total FROM waiting_list wl WHERE ${wlWhereClause}`, values),
+            queryOne(`SELECT COUNT(*)::int AS total FROM patient WHERE ${todaysPatientsWhere}`, values),
+            queryOne(`SELECT COUNT(*)::int AS total FROM lab_test_category_report WHERE ${todaysReportsWhere}`, values)
+        ]);
+
+        return resp(res, '200', {
+            corporateRequests: trResult?.total || 0,
+            waitingList: wlResult?.total || 0,
+            todaysPatients: tpResult?.total || 0,
+            todaysCompletedTests: tcResult?.total || 0,
+            isCorporateEnabled
+        });
+    } catch (err) {
+        console.error(err);
+        return resp(res, '500', err.message);
+    }
+});
+
 router.get('/', async (req, res) => {
     try {
         let whereClause = "t.deleted = false";

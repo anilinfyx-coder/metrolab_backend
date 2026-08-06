@@ -366,6 +366,7 @@ router.get('/dashboardOverview', async (req, res) => {
             expiring,
             expired,
             lowWallets,
+            latestWhitelabel,
         ] = await Promise.all([
             queryOne(`SELECT COUNT(*)::int AS count FROM b2b_clients
                       WHERE deleted = false
@@ -426,6 +427,7 @@ router.get('/dashboardOverview', async (req, res) => {
                         ) AS wallet_total_recharged
                  FROM b2b_clients
                  WHERE deleted = false
+                   AND (custom_domain IS NULL OR TRIM(custom_domain) = '')
                  ORDER BY creation_timestamp DESC NULLS LAST, id DESC
                  LIMIT $1`,
                 [listLimit]
@@ -519,6 +521,43 @@ router.get('/dashboardOverview', async (req, res) => {
                    AND COALESCE(wallet_balance, 0) <= $1`,
                 [lowWalletThreshold]
             ),
+            query(
+                `SELECT id, company_name, contact_person_name, mobile, email, wallet_balance, status, creation_timestamp, billing_mode,
+                        (
+                            SELECT s.amount
+                            FROM b2b_client_subscription s
+                            WHERE s.b2b_client_id = b2b_clients.id
+                              AND s.deleted = false
+                              AND s.status IS DISTINCT FROM false
+                              AND s.start_date <= CURRENT_DATE
+                              AND s.end_date >= CURRENT_DATE
+                            ORDER BY s.id DESC
+                            LIMIT 1
+                        ) AS active_subscription_amount,
+                        EXISTS (
+                            SELECT 1
+                            FROM b2b_client_subscription s
+                            WHERE s.b2b_client_id = b2b_clients.id
+                              AND s.deleted = false
+                              AND s.status IS DISTINCT FROM false
+                              AND s.start_date <= CURRENT_DATE
+                              AND s.end_date >= CURRENT_DATE
+                        ) AS has_active_subscription,
+                        COALESCE(
+                            (SELECT SUM(amount)
+                             FROM b2b_wallet_transactions
+                             WHERE b2b_client_id = b2b_clients.id
+                               AND UPPER(transaction_type) = 'CREDIT'),
+                            0
+                        ) AS wallet_total_recharged
+                 FROM b2b_clients
+                 WHERE deleted = false
+                   AND custom_domain IS NOT NULL
+                   AND TRIM(custom_domain) <> ''
+                 ORDER BY creation_timestamp DESC NULLS LAST, id DESC
+                 LIMIT $1`,
+                [listLimit]
+            ),
         ]);
 
         return resp(res, '200', {
@@ -534,6 +573,7 @@ router.get('/dashboardOverview', async (req, res) => {
                 total_active_subscriptions: parseInt(activeSubsCount?.count || 0, 10),
             },
             latest_b2b_clients: latestB2b.rows || [],
+            latest_whitelabel_clients: latestWhitelabel.rows || [],
             active_subscriptions: activeSubs.rows || [],
             top_lab_tests: topTests.rows || [],
             activity: {

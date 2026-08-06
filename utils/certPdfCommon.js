@@ -1,6 +1,6 @@
 const { queryOne } = require('../db');
 const { resolveAdminContext } = require('./adminContext');
-const { resolveUploadedFilePath } = require('./uploadedFiles');
+const { resolveUploadedFilePath, resolveLabLogoPath } = require('./uploadedFiles');
 const { PREFIX } = require('./gcs');
 
 const CHECKBOX_SIZE = 12;
@@ -24,9 +24,9 @@ function labText(labValue) {
     return textOrNull(labValue) || '';
 }
 
-/** Only the lab's uploaded logo — no Metro Lab default (same as health/physical certs). */
+/** Only the lab's uploaded logo — with GCS download support and default MetroLab logo fallback. */
 async function resolveCertLogoPath(lab) {
-    return resolveUploadedFilePath(lab?.logo_file, { prefix: PREFIX.b2bClients });
+    return resolveLabLogoPath(lab);
 }
 
 /**
