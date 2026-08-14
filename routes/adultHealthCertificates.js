@@ -99,6 +99,22 @@ router.get('/:id', async (req, res) => {
         `, [req.params.id]);
 
         if (!row) return resp(res, '404', 'Not found');
+        const b2bClientId = row.b2b_client_id || row.patient_b2b_client_id;
+        if (b2bClientId && row.lab_test_id) {
+            const testAccess = await queryOne(
+                `SELECT medical_officer_name, medical_officer_position, mrocc, clia_number, medical_officer_signature_file_name
+                 FROM b2b_client_lab_test_access
+                 WHERE b2b_client_id = $1 AND lab_test_id = $2 AND deleted = false LIMIT 1`,
+                [b2bClientId, row.lab_test_id]
+            );
+            if (testAccess) {
+                if (testAccess.medical_officer_name) row.medical_officer_name = testAccess.medical_officer_name;
+                if (testAccess.medical_officer_position) row.medical_officer_position = testAccess.medical_officer_position;
+                if (testAccess.mrocc) row.mrocc = testAccess.mrocc;
+                if (testAccess.clia_number) row.clia_number = testAccess.clia_number;
+                if (testAccess.medical_officer_signature_file_name) row.b2b_signature = testAccess.medical_officer_signature_file_name;
+            }
+        }
         decryptPIIFields(row);
         return resp(res, '200', row);
     } catch (err) {

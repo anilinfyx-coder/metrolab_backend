@@ -1,3 +1,4 @@
+// Updated: 2026-08-14 T13:58 - Email attachment PDF delivery parity for all certificates & reports
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');

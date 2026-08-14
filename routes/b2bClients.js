@@ -346,8 +346,11 @@ router.post('/', uploadFields, async (req, res) => {
             primary_color_code, website, medical_officer_name, mrocc, clia_number,
             medical_officer_position, medical_officer_signature_file_name,
             is_approval, approval_note, smtp_server, smtp_port, smtp_email, smtp_password,
-            user_id, role_type_id, is_fixed_price, fixed_price_amount, custom_domain, is_corporate_enabled
+            user_id, role_type_id, is_fixed_price, fixed_price_amount, custom_domain, is_corporate_enabled,
+            wallet_balance
         } = body;
+
+        const initialBalance = !isNaN(parseFloat(wallet_balance)) ? parseFloat(wallet_balance) : 0;
 
         const emailCheck = await validateUniqueLoginEmail(email);
         if (!emailCheck.ok) return resp(res, emailCheck.code, emailCheck.message);
@@ -368,11 +371,11 @@ router.post('/', uploadFields, async (req, res) => {
                 primary_color_code, website, medical_officer_name, mrocc, clia_number,
                 medical_officer_position, medical_officer_signature_file_name,
                 is_approval, approval_note, smtp_server, smtp_port, smtp_email, smtp_password,
-                user_id, role_type_id, status, deleted, is_fixed_price, fixed_price_amount, custom_domain, is_corporate_enabled
+                user_id, role_type_id, status, deleted, is_fixed_price, fixed_price_amount, custom_domain, is_corporate_enabled, wallet_balance
             ) VALUES (
                 $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,
                 $19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,
-                $37,$38,$39,true,false,$40,$41,$42,COALESCE($43, true)
+                $37,$38,$39,true,false,$40,$41,$42,COALESCE($43, true),$44
             ) RETURNING *`,
             [role_id, company_name, contact_person_name, mobile, public_phone_no,
                 normalizeLoginEmail(email), public_email, public_fax, address, country_id, state_id, city_id,
@@ -381,14 +384,21 @@ router.post('/', uploadFields, async (req, res) => {
                 primary_color_code, website, medical_officer_name, mrocc, clia_number,
                 medical_officer_position, medical_officer_signature_file_name,
                 is_approval, approval_note, smtp_server, smtp_port, smtp_email, smtp_password,
-                user_id, role_type_id, is_fixed_price || false, fixed_price_amount || 0, custom_domain || null, is_corporate_enabled]
+                user_id, role_type_id, is_fixed_price || false, fixed_price_amount || 0, custom_domain || null, is_corporate_enabled, initialBalance]
         );
 
-        if (row && row.email) {
-            // Since this action is performed by Superadmin, use Metrolab branding & credentials
-            const labForEmail = metroLabEmailLab();
-
-            sendWelcomeB2BMail(row.email, row.company_name, password, labForEmail).catch(err => console.error('B2B Email error:', err));
+        if (row) {
+            if (initialBalance > 0) {
+                await query(`
+                    INSERT INTO b2b_wallet_transactions (b2b_client_id, transaction_type, amount, closing_balance, description, created_by_id)
+                    VALUES ($1, 'INITIAL_BALANCE', $2, $3, 'Initial Wallet Balance', $4)
+                `, [row.id, initialBalance, initialBalance, req.user ? req.user.id : null]);
+            }
+            if (row.email) {
+                // Since this action is performed by Superadmin, use Metrolab branding & credentials
+                const labForEmail = metroLabEmailLab();
+                sendWelcomeB2BMail(row.email, row.company_name, password, labForEmail).catch(err => console.error('B2B Email error:', err));
+            }
         }
 
         return resp(res, '200', row);
@@ -534,8 +544,16 @@ router.put('/:id', uploadFields, async (req, res) => {
             'medical_officer_name', 'medical_officer_position', 'mrocc', 'clia_number',
             'logo_file', 'favicon_file', 'report_header_file', 'report_footer_file', 'medical_officer_signature_file_name',
             'smtp_server', 'smtp_port', 'smtp_email', 'smtp_password',
-            'is_approval', 'approval_note', 'status', 'is_fixed_price', 'fixed_price_amount', 'custom_domain', 'is_corporate_enabled'
+            'is_approval', 'approval_note', 'status', 'is_fixed_price', 'fixed_price_amount', 'custom_domain', 'is_corporate_enabled', 'wallet_balance'
         ];
+
+        let oldWalletBalance = null;
+        if (Object.prototype.hasOwnProperty.call(body, 'wallet_balance') && body.wallet_balance !== undefined && body.wallet_balance !== '') {
+            const existing = await queryOne(`SELECT wallet_balance FROM b2b_clients WHERE id = $1`, [req.params.id]);
+            if (existing) {
+                oldWalletBalance = parseFloat(existing.wallet_balance || 0);
+            }
+        }
 
         const updates = [];
         const values = [];
@@ -570,10 +588,24 @@ router.put('/:id', uploadFields, async (req, res) => {
                        email, public_email, public_fax, address, country_id, state_id, city_id,
                        support_mobile, support_email, support_person_name, tagline, primary_color_code,
                        website, smtp_server, smtp_port, smtp_email, smtp_password, status, deleted,
-                       is_fixed_price, fixed_price_amount, logo_file, favicon_file, is_corporate_enabled`,
+                       is_fixed_price, fixed_price_amount, logo_file, favicon_file, is_corporate_enabled, wallet_balance`,
             values
         );
         if (!row) return resp(res, '404', 'B2B Client not found');
+
+        if (oldWalletBalance !== null) {
+            const newWalletBalance = parseFloat(row.wallet_balance || 0);
+            if (newWalletBalance !== oldWalletBalance) {
+                const diff = newWalletBalance - oldWalletBalance;
+                const txnType = diff >= 0 ? 'CREDIT' : 'DEBIT';
+                const description = body.wallet_edit_reason || `Wallet balance edited by Super Admin (was $${oldWalletBalance.toFixed(2)})`;
+                await query(`
+                    INSERT INTO b2b_wallet_transactions (b2b_client_id, transaction_type, amount, closing_balance, description, created_by_id)
+                    VALUES ($1, $2, $3, $4, $5, $6)
+                `, [row.id, txnType, Math.abs(diff), newWalletBalance, description, req.user ? req.user.id : null]);
+            }
+        }
+
         return resp(res, '200', row);
     } catch (err) { return resp(res, '500', err.message); }
 });
@@ -626,6 +658,41 @@ router.post('/rechargeWallet', authMiddleware, async (req, res) => {
         }
 
         return resp(res, '200', { message: 'Wallet recharged successfully', newBalance });
+    } catch (err) {
+        console.error(err);
+        return resp(res, '500', err.message);
+    }
+});
+
+// ── POST /api/B2bClients/editWalletBalance ────────────────────────────
+router.post('/editWalletBalance', authMiddleware, async (req, res) => {
+    try {
+        const { b2b_client_id, new_balance, description } = req.body;
+        if (!b2b_client_id || new_balance === undefined || isNaN(new_balance) || Number(new_balance) < 0) {
+            return resp(res, '400', 'Invalid wallet balance amount');
+        }
+
+        const client = await queryOne(
+            `SELECT wallet_balance, company_name, email FROM b2b_clients WHERE id = $1 AND deleted = false`,
+            [b2b_client_id]
+        );
+        if (!client) return resp(res, '404', 'B2B Client not found');
+
+        const oldBalance = parseFloat(client.wallet_balance || 0);
+        const targetBalance = parseFloat(new_balance);
+        const diff = targetBalance - oldBalance;
+
+        await query(`UPDATE b2b_clients SET wallet_balance = $1 WHERE id = $2`, [targetBalance, b2b_client_id]);
+
+        const txnType = diff >= 0 ? 'CREDIT' : 'DEBIT';
+        const note = description || `Wallet Balance edited by Super Admin from $${oldBalance.toFixed(2)} to $${targetBalance.toFixed(2)}`;
+
+        await query(`
+            INSERT INTO b2b_wallet_transactions (b2b_client_id, transaction_type, amount, closing_balance, description, created_by_id)
+            VALUES ($1, $2, $3, $4, $5, $6)
+        `, [b2b_client_id, txnType, Math.abs(diff), targetBalance, note, req.user ? req.user.id : null]);
+
+        return resp(res, '200', { message: 'Wallet balance updated successfully', newBalance: targetBalance });
     } catch (err) {
         console.error(err);
         return resp(res, '500', err.message);

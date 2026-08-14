@@ -176,7 +176,7 @@ router.post('/getLabTestCategoryReportDetails', async (req, res) => {
         report.resolved_b2b_client_id = b2bClientId;
 
         const { resolveCertLabBranding } = require('../utils/certPdfCommon');
-        const brandingLab = await resolveCertLabBranding(req.user, b2bClientId);
+        const brandingLab = await resolveCertLabBranding(req.user, b2bClientId, report.lab_test_id);
         if (brandingLab) {
             report.b2b_company_name = brandingLab.company_name;
             report.b2b_logo = brandingLab.logo_file;
@@ -184,6 +184,11 @@ router.post('/getLabTestCategoryReportDetails', async (req, res) => {
             report.b2b_phone = brandingLab.public_phone_no;
             report.b2b_fax = brandingLab.public_fax;
             report.b2b_email = brandingLab.public_email || brandingLab.email;
+            report.medical_officer_name = brandingLab.medical_officer_name;
+            report.medical_officer_position = brandingLab.medical_officer_position;
+            report.mrocc = brandingLab.mrocc;
+            report.clia_number = brandingLab.clia_number;
+            report.medical_officer_signature_file_name = brandingLab.medical_officer_signature_file_name;
         }
 
         const questionFilter = b2bClientId
