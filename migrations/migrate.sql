@@ -165,3 +165,11 @@ ALTER TABLE patient ALTER COLUMN driving_license TYPE TEXT;
 
 -- ── B2B Billing Mode Master Switch ────────────────────────
 ALTER TABLE b2b_clients ADD COLUMN IF NOT EXISTS billing_mode VARCHAR(20) DEFAULT 'monthly';
+
+-- ── Test-Specific Medical Officer & Signature ───────────────
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS medical_officer_name VARCHAR(255);
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS medical_officer_position VARCHAR(255);
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS mrocc VARCHAR(100);
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS clia_number VARCHAR(100);
+ALTER TABLE b2b_client_lab_test_access ADD COLUMN IF NOT EXISTS medical_officer_signature_file_name VARCHAR(255);
+

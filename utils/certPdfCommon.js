@@ -5,8 +5,8 @@ const { PREFIX } = require('./gcs');
 
 const CHECKBOX_SIZE = 12;
 
-const LAB_SELECT = `SELECT company_name, logo_file, report_header_file, address, public_phone_no, public_fax,
-                public_email, tagline, email, medical_officer_name, mrocc, clia_number,
+const LAB_SELECT = `SELECT id, company_name, logo_file, report_header_file, address, public_phone_no, public_fax,
+                public_email, tagline, email, medical_officer_name, medical_officer_position, mrocc, clia_number,
                 medical_officer_signature_file_name,
                 smtp_server, smtp_port, smtp_email, smtp_password
          FROM b2b_clients
@@ -27,6 +27,12 @@ function labText(labValue) {
 /** Only the lab's uploaded logo — with GCS download support and default MetroLab logo fallback. */
 async function resolveCertLogoPath(lab) {
     return resolveLabLogoPath(lab);
+}
+
+/** Only the lab's uploaded signature image — with GCS download support. */
+async function resolveCertSignaturePath(lab) {
+    if (!lab?.medical_officer_signature_file_name) return null;
+    return resolveUploadedFilePath(lab.medical_officer_signature_file_name, { prefix: PREFIX.b2bClients });
 }
 
 /**
@@ -122,26 +128,51 @@ function drawUnderlineField(doc, x, y, width, value, fontSize = 10.5, lineOffset
  * 2. Admin context (B2B or corporate → parent B2B)
  * 3. Patient's linked B2B client (fallback)
  */
-async function resolveCertLabBranding(authUser, patientB2bClientId) {
+async function resolveCertLabBranding(authUser, patientB2bClientId, labTestId = null) {
+    let lab = null;
+
     if (authUser?.portal === 'b2b' && authUser.id) {
-        const lab = await queryOne(LAB_SELECT, [authUser.id]);
-        if (lab) return lab;
+        lab = await queryOne(LAB_SELECT, [authUser.id]);
     }
 
-    if (authUser?.id) {
+    if (!lab && patientB2bClientId) {
+        lab = await queryOne(LAB_SELECT, [patientB2bClientId]);
+    }
+
+    if (!lab && authUser?.id) {
         const ctx = await resolveAdminContext(authUser.id);
         if (ctx.b2b_client_id) {
-            const lab = await queryOne(LAB_SELECT, [ctx.b2b_client_id]);
-            if (lab) return lab;
+            lab = await queryOne(LAB_SELECT, [ctx.b2b_client_id]);
         }
     }
 
-    if (patientB2bClientId) {
-        const lab = await queryOne(LAB_SELECT, [patientB2bClientId]);
-        if (lab) return lab;
+    if (lab && lab.id && labTestId) {
+        const testAccess = await queryOne(
+            `SELECT medical_officer_name, medical_officer_position, mrocc, clia_number, medical_officer_signature_file_name
+             FROM b2b_client_lab_test_access
+             WHERE b2b_client_id = $1 AND lab_test_id = $2 AND deleted = false LIMIT 1`,
+            [lab.id, labTestId]
+        );
+        if (testAccess) {
+            if (testAccess.medical_officer_name && String(testAccess.medical_officer_name).trim()) {
+                lab.medical_officer_name = testAccess.medical_officer_name.trim();
+            }
+            if (testAccess.medical_officer_position && String(testAccess.medical_officer_position).trim()) {
+                lab.medical_officer_position = testAccess.medical_officer_position.trim();
+            }
+            if (testAccess.mrocc && String(testAccess.mrocc).trim()) {
+                lab.mrocc = testAccess.mrocc.trim();
+            }
+            if (testAccess.clia_number && String(testAccess.clia_number).trim()) {
+                lab.clia_number = testAccess.clia_number.trim();
+            }
+            if (testAccess.medical_officer_signature_file_name && String(testAccess.medical_officer_signature_file_name).trim()) {
+                lab.medical_officer_signature_file_name = testAccess.medical_officer_signature_file_name.trim();
+            }
+        }
     }
 
-    return null;
+    return lab;
 }
 
 /**
@@ -167,6 +198,7 @@ async function drawLabPdfBanner(doc, lab, { left, right, y = 32 } = {}) {
 module.exports = {
     resolveCertLabBranding,
     resolveCertLogoPath,
+    resolveCertSignaturePath,
     drawCertBannerHeader,
     drawLabPdfBanner,
     labText,

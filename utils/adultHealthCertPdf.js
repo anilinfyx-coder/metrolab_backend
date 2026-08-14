@@ -4,7 +4,7 @@ const path = require('path');
 const PDFDocument = require('pdfkit');
 const muhammara = require('muhammara');
 const { queryOne } = require('../db');
-const { resolveCertLabBranding, resolveCertLogoPath, drawCertBannerHeader, drawCheckbox, drawUnderlineField, labText, CHECKBOX_SIZE } = require('./certPdfCommon');
+const { resolveCertLabBranding, resolveCertLogoPath, resolveCertSignaturePath, drawCertBannerHeader, drawCheckbox, drawUnderlineField, labText, CHECKBOX_SIZE } = require('./certPdfCommon');
 const { decryptPIIFields } = require('./cryptoUtils');
 
 function pad(n) {
@@ -58,8 +58,8 @@ function encryptPdfBuffer(plainBuffer, userPassword) {
     }
 }
 
-async function resolveLoggedInLab(authUser, patientB2bClientId) {
-    return resolveCertLabBranding(authUser, patientB2bClientId);
+async function resolveLoggedInLab(authUser, patientB2bClientId, labTestId = null) {
+    return resolveCertLabBranding(authUser, patientB2bClientId, labTestId);
 }
 
 function textOrNull(value) {
@@ -86,53 +86,99 @@ function isFemale(sex) {
     return sex === 2 || sex === '2' || String(sex || '').toLowerCase() === 'female';
 }
 
-function drawDigitalAuthBlock(doc, { left, pageW, y, clinicianName, specialty, examDate, clinicianAddress }) {
+function drawDigitalAuthBlock(doc, { left, pageW, y, clinicianName, specialty, examDate, clinicianAddress, mroName, mrocc, cliaNumber, sigPath }) {
     doc.save();
-    const rowH = 24;
+    const rowH = 22;
 
     let currentY = y;
-    doc.font('Times-Roman').fontSize(11).fillColor('#111');
+    
+    // 1. Clinician Block (as before)
+    doc.font('Times-Roman').fontSize(10.5).fillColor('#111');
     doc.text('Name/Signature of examining Clinician:', left, currentY + 2, { lineBreak: false });
-    const label1W = doc.widthOfString('Name/Signature of examining Clinician:') + 8;
-    const nameLineW = 200;
+    const label1W = doc.widthOfString('Name/Signature of examining Clinician:') + 6;
+    const nameLineW = 180;
     const nameX = left + label1W;
     
-    doc.moveTo(nameX, currentY + 14).lineTo(nameX + nameLineW, currentY + 14).strokeColor('#111').lineWidth(0.8).stroke();
+    doc.moveTo(nameX, currentY + 13).lineTo(nameX + nameLineW, currentY + 13).strokeColor('#111').lineWidth(0.8).stroke();
     if (clinicianName) {
-        doc.font('Helvetica-Bold').fontSize(11).fillColor('#111');
+        doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#111');
         doc.text(String(clinicianName), nameX, currentY + 1, { width: nameLineW, align: 'center', lineBreak: false });
     }
     
     const specX = nameX + nameLineW + 8;
-    doc.font('Times-Roman').fontSize(11).fillColor('#111');
+    doc.font('Times-Roman').fontSize(10.5).fillColor('#111');
     doc.text(specialty ? String(specialty) : 'MD/PA/NP', specX, currentY + 2, { lineBreak: false });
     currentY += rowH;
 
-    doc.font('Times-Roman').fontSize(11).fillColor('#111');
+    doc.font('Times-Roman').fontSize(10.5).fillColor('#111');
     doc.text('Date of examination:', left, currentY + 2, { lineBreak: false });
-    const label2W = doc.widthOfString('Date of examination:') + 8;
-    const dateLineW = 160;
+    const label2W = doc.widthOfString('Date of examination:') + 6;
+    const dateLineW = 120;
     const dateX = left + label2W;
     
-    doc.moveTo(dateX, currentY + 14).lineTo(dateX + dateLineW, currentY + 14).strokeColor('#111').lineWidth(0.8).stroke();
+    doc.moveTo(dateX, currentY + 13).lineTo(dateX + dateLineW, currentY + 13).strokeColor('#111').lineWidth(0.8).stroke();
     if (examDate) {
-        doc.font('Helvetica-Bold').fontSize(11).fillColor('#111');
+        doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#111');
         doc.text(formatUsDate(examDate), dateX, currentY + 1, { width: dateLineW, align: 'center', lineBreak: false });
+    }
+    
+    const addrLabelX = dateX + dateLineW + 12;
+    doc.font('Times-Roman').fontSize(10.5).fillColor('#111');
+    doc.text('Address:', addrLabelX, currentY + 2, { lineBreak: false });
+    const addrLabelW = doc.widthOfString('Address:') + 6;
+    const addrLineW = left + pageW - (addrLabelX + addrLabelW);
+    const addrX = addrLabelX + addrLabelW;
+    
+    doc.moveTo(addrX, currentY + 13).lineTo(addrX + addrLineW, currentY + 13).strokeColor('#111').lineWidth(0.8).stroke();
+    if (clinicianAddress) {
+        doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#111');
+        doc.text(String(clinicianAddress), addrX, currentY + 1, { width: addrLineW, align: 'center', lineBreak: false, ellipsis: true });
+    }
+    currentY += rowH + 4;
+
+    // Divider line between Clinician and MRO
+    doc.moveTo(left, currentY).lineTo(left + pageW, currentY).strokeColor('#cbd5e1').lineWidth(0.5).stroke();
+    currentY += 6;
+
+    // 2. Medical Review Officer Section (2 Lines)
+    // Line 1: Medical Officer Name & Signature Image
+    doc.font('Times-Bold').fontSize(10.5).fillColor('#111');
+    doc.text('Medical Review Officer:', left, currentY + 2, { lineBreak: false });
+    const mroLabelW = doc.widthOfString('Medical Review Officer:') + 6;
+    const mroNameX = left + mroLabelW;
+    const mroNameLineW = 160;
+    
+    doc.moveTo(mroNameX, currentY + 13).lineTo(mroNameX + mroNameLineW, currentY + 13).strokeColor('#111').lineWidth(0.8).stroke();
+    if (mroName) {
+        doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#111');
+        doc.text(String(mroName), mroNameX, currentY + 1, { width: mroNameLineW, align: 'center', lineBreak: false });
+    }
+
+    const sigLabelX = mroNameX + mroNameLineW + 16;
+    doc.font('Times-Bold').fontSize(10.5).fillColor('#111');
+    doc.text('Signature:', sigLabelX, currentY + 2, { lineBreak: false });
+    const sigLabelW = doc.widthOfString('Signature:') + 6;
+    const sigLineX = sigLabelX + sigLabelW;
+    const sigLineW = left + pageW - sigLineX;
+
+    doc.moveTo(sigLineX, currentY + 13).lineTo(sigLineX + sigLineW, currentY + 13).strokeColor('#111').lineWidth(0.8).stroke();
+    if (sigPath && !sigPath.toLowerCase().endsWith('.webp')) {
+        try {
+            doc.image(sigPath, sigLineX + (sigLineW - 90) / 2, currentY - 14, { fit: [90, 24] });
+        } catch (err) {
+            console.warn('Could not embed signature in adult health cert:', err.message);
+        }
     }
     currentY += rowH;
 
-    doc.font('Times-Roman').fontSize(11).fillColor('#111');
-    doc.text('Address:', left, currentY + 2, { lineBreak: false });
-    const label3W = doc.widthOfString('Address:') + 8;
-    const addrLineW = 340;
-    const addrX = left + label3W;
-    
-    doc.moveTo(addrX, currentY + 14).lineTo(addrX + addrLineW, currentY + 14).strokeColor('#111').lineWidth(0.8).stroke();
-    if (clinicianAddress) {
-        doc.font('Helvetica-Bold').fontSize(11).fillColor('#111');
-        doc.text(String(clinicianAddress), addrX, currentY + 1, { width: addrLineW, align: 'center', lineBreak: false, ellipsis: true });
+    // Line 2: MROCC & CLIA No.
+    doc.font('Times-Roman').fontSize(10).fillColor('#333');
+    const mroccText = mrocc ? `MROCC: ${mrocc}` : '';
+    const cliaText = cliaNumber ? `CLIA No.: ${cliaNumber}` : '';
+    const mroSubDetails = [mroccText, cliaText].filter(Boolean).join('   |   ');
+    if (mroSubDetails) {
+        doc.text(mroSubDetails, left, currentY + 2, { width: pageW, align: 'left' });
     }
-    currentY += rowH;
 
     doc.restore();
     return currentY + 16;
@@ -143,9 +189,12 @@ async function buildAdultHealthCertPdf(id, options = {}) {
         `SELECT 
             ahc.*,
             p.name as patient_name, p.dob as patient_dob, p.gender as sex, p.mobile as tel, p.street1, p.street2,
-            p.city, p.state, p.zipcode, p.email as patient_email, p.b2b_client_id
+            p.city, p.state, p.zipcode, p.email as patient_email,
+            p.b2b_client_id as patient_b2b_client_id,
+            wl.b2b_client_id as waiting_list_b2b_client_id
         FROM adult_health_certificates ahc
         LEFT JOIN patient p ON ahc.patient_id = p.id
+        LEFT JOIN waiting_list wl ON ahc.waiting_list_id = wl.id
         WHERE ahc.id = $1 AND ahc.deleted = false`,
         [id]
     );
@@ -153,9 +202,10 @@ async function buildAdultHealthCertPdf(id, options = {}) {
     if (!cert) throw new Error('Certificate not found');
     decryptPIIFields(cert);
 
-    // Logged-in lab branding (admin staff → b2b via user_id, or b2b portal).
-    const lab = await resolveLoggedInLab(options.authUser, cert.b2b_client_id);
+    const b2bClientId = cert.patient_b2b_client_id || cert.waiting_list_b2b_client_id;
+    const lab = await resolveCertLabBranding(options.authUser, b2bClientId, cert.lab_test_id);
     const logoPath = await resolveCertLogoPath(lab);
+    const sigPath = await resolveCertSignaturePath(lab);
     const hasLabLogo = Boolean(logoPath);
 
     return new Promise((resolve, reject) => {
@@ -333,8 +383,12 @@ async function buildAdultHealthCertPdf(id, options = {}) {
                 y,
                 clinicianName: cert.clinician_name,
                 specialty: cert.clinician_specialty,
-                examDate: cert.date_of_examination,
+                examDate: cert.date_of_examination || cert.creation_timestamp || new Date(),
                 clinicianAddress: cert.clinician_address,
+                mroName: lab?.medical_officer_name,
+                mrocc: lab?.mrocc,
+                cliaNumber: lab?.clia_number,
+                sigPath,
             });
 
             doc.end();

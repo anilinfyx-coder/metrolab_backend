@@ -163,7 +163,7 @@ function encryptPdfBuffer(plainBuffer, userPassword) {
     }
 }
 
-async function loadLabTestReportBundle(reportId) {
+async function loadLabTestReportBundle(reportId, options = {}) {
     const report = await queryOne(
         `SELECT r.*,
                 p.name as patient_name,
@@ -197,14 +197,21 @@ async function loadLabTestReportBundle(reportId) {
 
     decryptPIIFields(report);
 
-    const b2bClientId = await resolveOwnerB2bClientId({
-        b2b_client_id: report.b2b_client_id || report.patient_b2b_client_id || report.waiting_list_b2b_client_id,
-        waiting_list_id: report.waiting_list_id,
-        patient_id: report.patient_id,
-        corporate_client_id: report.corporate_client_id || report.waiting_list_corporate_client_id,
-        lab_test_id: report.lab_test_id,
-        created_by_id: report.created_by_id,
-    });
+    let b2bClientId = null;
+    if (options.authUser?.portal === 'b2b' && options.authUser.id) {
+        b2bClientId = options.authUser.id;
+    }
+
+    if (!b2bClientId) {
+        b2bClientId = await resolveOwnerB2bClientId({
+            b2b_client_id: report.patient_b2b_client_id || report.waiting_list_b2b_client_id || report.b2b_client_id,
+            waiting_list_id: report.waiting_list_id,
+            patient_id: report.patient_id,
+            corporate_client_id: report.corporate_client_id || report.waiting_list_corporate_client_id,
+            lab_test_id: report.lab_test_id,
+            created_by_id: report.created_by_id,
+        });
+    }
 
     const { labTest } = await resolveLabTestWithDisplayOptions(report.lab_test_id, {
         b2b_client_id: b2bClientId,
@@ -217,16 +224,8 @@ async function loadLabTestReportBundle(reportId) {
 
     report.reason_for_test = report.reason_for_test || report.waiting_list_reason_for_test || null;
 
-    const b2b = b2bClientId
-        ? await queryOne(
-            `SELECT company_name, tagline, public_phone_no, public_fax, public_email, custom_domain, email,
-                    address, medical_officer_name, mrocc, clia_number,
-                    medical_officer_signature_file_name, logo_file, report_header_file,
-                    smtp_server, smtp_port, smtp_email, smtp_password
-             FROM b2b_clients WHERE id = $1 LIMIT 1`,
-            [b2bClientId]
-        )
-        : null;
+    const { resolveCertLabBranding } = require('./certPdfCommon');
+    const b2b = await resolveCertLabBranding(options.authUser, b2bClientId, report.lab_test_id);
 
     let parameters;
     if (b2bClientId) {
@@ -818,7 +817,7 @@ async function generatePlainLabTestReportPdf(bundle) {
  * @returns {{ buffer: Buffer, filename: string, password: string|null, report: object }}
  */
 async function buildLabTestReportPdf(reportId, { encrypt = true, authUser } = {}) {
-    const bundle = await loadLabTestReportBundle(reportId);
+    const bundle = await loadLabTestReportBundle(reportId, { authUser });
     if (!bundle) {
         const err = new Error('Report not found');
         err.code = '404';
@@ -866,7 +865,7 @@ async function buildLabTestReportPdf(reportId, { encrypt = true, authUser } = {}
     }
 
     const patientB2b = bundle.b2bClientId || bundle.report.patient_b2b_client_id;
-    const brandingLab = await resolveCertLabBranding(authUser, patientB2b);
+    const brandingLab = await resolveCertLabBranding(authUser, patientB2b, bundle.report.lab_test_id);
     if (brandingLab) {
         bundle.b2b = brandingLab;
     }
