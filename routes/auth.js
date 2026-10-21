@@ -204,12 +204,25 @@ router.post('/login', async (req, res) => {
                 };
             } else {
                 portal = 'corporate';
+                let b2bBranding = null;
+                if (user.b2b_client_id) {
+                    b2bBranding = await queryOne(
+                        `SELECT company_name, tagline, logo_file, favicon_file, primary_color_code FROM b2b_clients WHERE id = $1 AND deleted = false LIMIT 1`,
+                        [user.b2b_client_id]
+                    );
+                }
                 payload = {
                     id: user.id,
                     name: user.company_name || user.first_name,
                     email: user.email,
                     role: user.role_id,
                     portal,
+                    b2b_client_id: user.b2b_client_id || null,
+                    company_name: b2bBranding?.company_name || null,
+                    tagline: b2bBranding?.tagline || null,
+                    logo_file: b2bBranding?.logo_file || null,
+                    favicon_file: b2bBranding?.favicon_file || null,
+                    primary_color_code: b2bBranding?.primary_color_code || null,
                 };
             }
 
