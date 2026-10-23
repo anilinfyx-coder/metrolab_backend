@@ -286,13 +286,13 @@ async function resolveReportLogoPath(b2b) {
     return resolveLabLogoPath(b2b);
 }
 
-/** Page layout constants — even spacing + aligned columns. */
+/** Page layout constants — compact spacing + aligned columns to guarantee 1-page fit. */
 const PAGE = {
-    left: 44,
-    rightMargin: 44,
-    rowH: 16,
-    sectionGap: 12,
-    ruleGap: 10,
+    left: 40,
+    rightMargin: 40,
+    rowH: 14,
+    sectionGap: 6,
+    ruleGap: 6,
 };
 
 function pageRight(doc) {
@@ -309,24 +309,31 @@ function pageMid(doc) {
  * Bold label + ":" + value.
  * Colon is always drawn at a fixed X (end of label column), so every value
  * starts in the same vertical line with ":" immediately before it.
+ * When a value wraps to 2+ lines, calculates the exact rendered height so
+ * subsequent lines never overlap or clutter.
  */
-function drawLabelValue(doc, x, y, label, value, labelWidth = 150, valueWidth = 140) {
+function drawLabelValue(doc, x, y, label, value, labelWidth = 145, valueWidth = 135) {
     const text = value == null || value === '' ? '—' : String(value);
     const rawLabel = String(label || '').replace(/\s*:\s*$/, '');
     const colonX = x + labelWidth;
-    const valueX = colonX + 8;
+    const valueX = colonX + 6;
+    const actualValW = Math.max(40, valueWidth - 6);
 
-    doc.font('Helvetica-Bold').fontSize(9).fillColor('#111')
+    doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#111')
         .text(rawLabel, x, y, { width: labelWidth - 2, lineBreak: false, ellipsis: true });
-    doc.font('Helvetica-Bold').fontSize(9).fillColor('#111')
+    doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#111')
         .text(':', colonX, y, { lineBreak: false });
-    doc.font('Helvetica').fontSize(9).fillColor('#111')
-        .text(text, valueX, y, {
-            width: Math.max(40, valueWidth - 8),
-            lineBreak: false,
-            ellipsis: true,
-        });
-    return y + PAGE.rowH;
+
+    doc.font('Helvetica').fontSize(8.5).fillColor('#111');
+    const valH = Math.ceil(doc.heightOfString(text, { width: actualValW, lineGap: 0.5 }));
+    doc.text(text, valueX, y, {
+        width: actualValW,
+        lineBreak: true,
+        lineGap: 0.5,
+    });
+
+    const rowAdvance = Math.max(PAGE.rowH, valH + 2);
+    return y + rowAdvance;
 }
 
 function drawHRule(doc, left, right, y, color = '#c0c0c0', width = 0.6) {
@@ -344,10 +351,10 @@ function drawReportHeader(doc, bundle) {
     const right = pageRight(doc);
     const contentWidth = right - left;
     const mid = pageMid(doc);
-    const leftLabelW = 155;
-    const rightLabelW = 120;
-    const leftValueW = mid - left - leftLabelW - 12;
-    const rightValueW = right - mid - rightLabelW - 8;
+    const leftLabelW = 132;
+    const rightLabelW = 110;
+    const leftValueW = mid - left - leftLabelW - 10;
+    const rightValueW = right - mid - rightLabelW - 6;
 
     const company = labText(b2b?.company_name);
     const address = labText(b2b?.address);
@@ -359,7 +366,7 @@ function drawReportHeader(doc, bundle) {
     let y = drawCertBannerHeader(doc, {
         left,
         right,
-        y: 30,
+        y: 24,
         logoPath,
         hasLabLogo,
         company,
@@ -369,16 +376,16 @@ function drawReportHeader(doc, bundle) {
         email,
     });
 
-    doc.font('Times-Bold').fontSize(16).fillColor('#111')
+    doc.font('Times-Bold').fontSize(15).fillColor('#111')
         .text(report.lab_test_name || 'Lab Test Report', left, y, { width: contentWidth, align: 'center' });
-    y += 24;
+    y += 18;
 
-    doc.font('Helvetica-Bold').fontSize(9).fillColor('#222')
+    doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#222')
         .text(`Report Printed On: ${formatUsDateTime(new Date())}`, left, y, {
             width: contentWidth,
             align: 'right',
         });
-    y += 14;
+    y += 11;
     y = drawHRule(doc, left, right, y, '#000', 0.9) + PAGE.ruleGap;
 
     let yL = y;
@@ -413,11 +420,12 @@ function drawSpecimenSection(doc, bundle, startY) {
     const { report, labTest } = bundle;
     const left = PAGE.left;
     const right = pageRight(doc);
+    const contentWidth = right - left;
     const mid = pageMid(doc);
-    const leftLabelW = 155;
-    const rightLabelW = 135;
-    const leftValueW = mid - left - leftLabelW - 12;
-    const rightValueW = right - mid - rightLabelW - 8;
+    const leftLabelW = 132;
+    const rightLabelW = 110;
+    const leftValueW = mid - left - leftLabelW - 10;
+    const rightValueW = right - mid - rightLabelW - 6;
 
     const showSpecimen = showFlag(labTest, 'show_specimen');
     const showCollected = showFlag(labTest, 'show_collected_date') || showFlag(labTest, 'show_collected_time');
@@ -429,12 +437,16 @@ function drawSpecimenSection(doc, bundle, startY) {
     }
 
     let y = drawHRule(doc, left, right, startY, '#c0c0c0', 0.5) + PAGE.ruleGap;
+
+    // Service and Specimen Type gets full width with same colon alignment as other left-side fields
+    if (showSpecimen) {
+        const fullValW = contentWidth - leftLabelW - 10;
+        y = drawLabelValue(doc, left, y, 'Service and Specimen Type:', report.specimen_type_name || '—', leftLabelW, fullValW);
+    }
+
     let yL = y;
     let yR = y;
 
-    if (showSpecimen) {
-        yL = drawLabelValue(doc, left, yL, 'Service and Specimen Type:', report.specimen_type_name || '—', leftLabelW, leftValueW);
-    }
     if (showReceived) {
         yL = drawLabelValue(doc, left, yL, 'Received Date/Time:', formatUsDateTime(report.received_timestamp), leftLabelW, leftValueW);
     }
@@ -445,7 +457,7 @@ function drawSpecimenSection(doc, bundle, startY) {
         yR = drawLabelValue(doc, mid, yR, 'Reported Date/Time:', formatUsDateTime(report.reported_timestamp), rightLabelW, rightValueW);
     }
 
-    y = Math.max(yL, yR) + 6;
+    y = Math.max(yL, yR) + 4;
     return drawHRule(doc, left, right, y, '#c0c0c0', 0.5) + PAGE.ruleGap;
 }
 
@@ -454,10 +466,10 @@ function drawPatientSection(doc, bundle, startY) {
     const left = PAGE.left;
     const right = pageRight(doc);
     const mid = pageMid(doc);
-    const leftLabelW = 155;
-    const rightLabelW = 120;
-    const leftValueW = mid - left - leftLabelW - 12;
-    const rightValueW = right - mid - rightLabelW - 8;
+    const leftLabelW = 132;
+    const rightLabelW = 110;
+    const leftValueW = mid - left - leftLabelW - 10;
+    const rightValueW = right - mid - rightLabelW - 6;
 
     let yL = startY;
     let yR = startY;
@@ -469,41 +481,53 @@ function drawPatientSection(doc, bundle, startY) {
     const addrRaw = 'Patient/Donor Address';
     const addrValue = buildPatientAddress(report);
     const colonX = left + leftLabelW;
-    const addrValueX = colonX + 8;
-    const addrValueW = Math.max(40, leftValueW - 8);
-    doc.font('Helvetica-Bold').fontSize(9).fillColor('#111')
+    const addrValueX = colonX + 6;
+    const addrValueW = Math.max(40, leftValueW - 6);
+    doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#111')
         .text(addrRaw, left, yL, { width: leftLabelW - 2, lineBreak: false, ellipsis: true });
-    doc.font('Helvetica-Bold').fontSize(9).fillColor('#111')
+    doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#111')
         .text(':', colonX, yL, { lineBreak: false });
-    doc.font('Helvetica').fontSize(9).fillColor('#111');
+    doc.font('Helvetica').fontSize(8.5).fillColor('#111');
     const addrH = Math.max(PAGE.rowH, Math.ceil(doc.heightOfString(addrValue, { width: addrValueW })));
-    doc.text(addrValue, addrValueX, yL, { width: addrValueW });
+    doc.text(addrValue, addrValueX, yL, { width: addrValueW, lineGap: 0.5 });
     yL += addrH + 2;
 
     yR = drawLabelValue(doc, mid, yR, "Patient's SSN:", report.patient_ssn || '—', rightLabelW, rightValueW);
     yR = drawLabelValue(doc, mid, yR, 'Patient/Donor Age:', calcAge(report.patient_dob), rightLabelW, rightValueW);
     yR = drawLabelValue(doc, mid, yR, 'Patient/Donor Gender:', genderLabel(report.patient_gender), rightLabelW, rightValueW);
 
-    const y = Math.max(yL, yR) + 8;
+    const y = Math.max(yL, yR) + 4;
     return drawHRule(doc, left, right, y, '#c0c0c0', 0.5) + PAGE.ruleGap;
 }
 
-function drawBoldInlineField(doc, x, y, label, value) {
-    doc.font('Helvetica-Bold').fontSize(9).fillColor('#111').text(label, x, y, { continued: true });
-    doc.font('Helvetica').fontSize(9).fillColor('#111').text(` ${value || '—'}`);
-    return y + PAGE.rowH;
+/**
+ * Multi-line safe inline bold field: measures real wrapped height so remarks never overlap next rows.
+ */
+function drawBoldInlineField(doc, x, y, label, value, maxWidth = 532) {
+    const textVal = value == null || value === '' ? '—' : String(value);
+    doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#111');
+    const labelW = doc.widthOfString(label + ' ');
+    doc.text(label, x, y, { continued: false });
+
+    doc.font('Helvetica').fontSize(8.5).fillColor('#111');
+    const valX = x + labelW;
+    const valW = Math.max(80, maxWidth - labelW);
+    const valH = Math.ceil(doc.heightOfString(textVal, { width: valW }));
+    doc.text(textVal, valX, y, { width: valW, lineGap: 1 });
+
+    const rowAdvance = Math.max(PAGE.rowH, valH + 2);
+    return y + rowAdvance;
 }
 
 function drawDrugsTableHeader(doc, left, right, cols, y) {
-    // Tall enough for 2-line cutoff headers — prevents overlap with first data row.
-    const headerH = 30;
+    const headerH = 19;
     doc.font('Helvetica-Bold').fontSize(8).fillColor('#111');
     let x = left + 3;
     cols.forEach((c) => {
-        doc.text(c.title, x, y + 3, {
+        doc.text(c.title, x, y + 2, {
             width: c.w - 6,
             align: 'left',
-            lineGap: 1,
+            lineGap: 0.5,
         });
         x += c.w;
     });
@@ -522,54 +546,97 @@ function drawDrugsTestedSection(doc, bundle, startY) {
     if (!parameters || parameters.length === 0) return startY;
 
     doc.moveTo(left, y).lineTo(right, y).strokeColor('#000').lineWidth(1).stroke();
-    y += 9;
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#111')
-        .text('Drugs Tested', left, y, { width: contentWidth, align: 'center' });
-    y += 15;
-    doc.moveTo(left, y).lineTo(right, y).strokeColor('#000').lineWidth(1).stroke();
-    y += 6;
+    y += 4;
+    const hasCutoffs = parameters.some((p) => {
+        const sc = p.screening_cutoff;
+        const cc = p.confirmation_cutoff;
+        return (sc !== null && sc !== undefined && String(sc).trim() !== '' && String(sc).toLowerCase() !== 'null') ||
+               (cc !== null && cc !== undefined && String(cc).trim() !== '' && String(cc).toLowerCase() !== 'null');
+    });
 
-    // Match LTCR reference proportions: Drug → Result close-ish, then a wider
-    // Result column (gap before cutoffs), then Screening / Confirmation closer together.
-    const drugW = 155;
-    const resultW = 110;
-    const screenW = 130;
-    const confirmW = contentWidth - drugW - resultW - screenW;
-    const cols = [
-        { title: 'Drug Name', w: drugW },
-        { title: 'Result', w: resultW },
-        { title: 'Laboratory Screening Cutoff*', w: screenW },
-        { title: 'Laboratory Confirmation\nCutoff*', w: confirmW },
-    ];
-    const rowH = 22;
-    const bottomLimit = () => doc.page.height - 48;
+    const tableHeading = hasCutoffs ? 'Drugs Tested' : (labTest?.name || 'Test Parameters');
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#111')
+        .text(tableHeading, left, y, { width: contentWidth, align: 'center' });
+    y += 12;
+    doc.moveTo(left, y).lineTo(right, y).strokeColor('#000').lineWidth(1).stroke();
+    y += 3;
+
+    let cols;
+    if (hasCutoffs) {
+        const drugW = 205;
+        const resultW = 75;
+        const screenW = 125;
+        const confirmW = contentWidth - drugW - resultW - screenW;
+        cols = [
+            { title: 'Drug Name', w: drugW },
+            { title: 'Result', w: resultW },
+            { title: 'Laboratory Screening Cutoff*', w: screenW },
+            { title: 'Laboratory Confirmation\nCutoff*', w: confirmW },
+        ];
+    } else {
+        const resultW = 120;
+        const paramW = contentWidth - resultW;
+        cols = [
+            { title: 'Parameter Name', w: paramW },
+            { title: 'Result', w: resultW },
+        ];
+    }
+
+    // Adapt base row height based on number of parameters to guarantee 1-page fit
+    const paramCount = parameters.length;
+    const baseRowH = paramCount > 10 ? 14 : paramCount > 6 ? 16 : 18;
+    const fontSize = paramCount > 10 ? 8 : 8.5;
+    const bottomLimit = () => doc.page.height - 30;
 
     y = drawDrugsTableHeader(doc, left, right, cols, y);
 
     parameters.forEach((p) => {
-        if (y + rowH > bottomLimit()) {
+        doc.font('Helvetica').fontSize(fontSize);
+        const labelText = String(p.label || '—');
+        const labelH = Math.ceil(doc.heightOfString(labelText, { width: cols[0].w - 6 }));
+        const currentRowH = Math.max(baseRowH, labelH + 2);
+
+        if (y + currentRowH > bottomLimit()) {
             doc.addPage();
-            y = 40;
+            y = 30;
             y = drawDrugsTableHeader(doc, left, right, cols, y);
         }
-        const vals = [
-            p.label || '—',
-            p.value || '—',
-            formatCutoff(p.screening_cutoff, p.unit_text),
-            formatCutoff(p.confirmation_cutoff, p.unit_text),
-        ];
-        doc.font('Helvetica').fontSize(9).fillColor('#111');
+
+        const vals = hasCutoffs
+            ? [
+                labelText,
+                p.value || '—',
+                formatCutoff(p.screening_cutoff, p.unit_text),
+                formatCutoff(p.confirmation_cutoff, p.unit_text),
+            ]
+            : [
+                labelText,
+                p.value || '—',
+            ];
+
+        doc.font('Helvetica').fontSize(fontSize).fillColor('#111');
         let x = left + 3;
-        const textY = y + Math.floor((rowH - 10) / 2);
+        const textY = y + 1;
+
         vals.forEach((v, i) => {
-            doc.text(String(v), x, textY, {
-                width: cols[i].w - 6,
-                lineBreak: false,
-                ellipsis: true,
-            });
+            if (i === 0) {
+                // Drug / Parameter Name wraps smoothly if multi-word so it never cuts off
+                doc.text(String(v), x, textY, {
+                    width: cols[i].w - 6,
+                    lineBreak: true,
+                    lineGap: 0.5,
+                });
+            } else {
+                doc.text(String(v), x, textY, {
+                    width: cols[i].w - 6,
+                    lineBreak: false,
+                    ellipsis: true,
+                });
+            }
             x += cols[i].w;
         });
-        y += rowH;
+
+        y += currentRowH;
         doc.moveTo(left, y).lineTo(right, y).strokeColor('#dddddd').lineWidth(0.4).stroke();
     });
 
@@ -587,18 +654,17 @@ function drawQuestionsSection(doc, bundle, startY) {
     if (!questions || questions.length === 0) return startY;
 
     doc.moveTo(left, y).lineTo(right, y).strokeColor('#000').lineWidth(1).stroke();
-    y += 9;
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#111')
+    y += 4;
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#111')
         .text('Questions', left, y, { width: contentWidth, align: 'center' });
-    y += 15;
+    y += 12;
     doc.moveTo(left, y).lineTo(right, y).strokeColor('#000').lineWidth(1).stroke();
-    y += 6;
+    y += 3;
 
     const qW = contentWidth - 60;
     const aW = 60;
-
-    const rowH = 22;
-    const bottomLimit = () => doc.page.height - 48;
+    const rowH = 15;
+    const bottomLimit = () => doc.page.height - 30;
 
     questions.forEach((q) => {
         let displayAnswer = q.answer || '—';
@@ -606,26 +672,26 @@ function drawQuestionsSection(doc, bundle, startY) {
         if (displayAnswer === '0') displayAnswer = 'No';
 
         const textH = Math.ceil(doc.heightOfString(q.question || '—', { width: qW - 6 }));
-        const needed = Math.max(rowH, textH + 10);
-        
+        const needed = Math.max(rowH, textH + 3);
+
         if (y + needed > bottomLimit()) {
             doc.addPage();
-            y = 40;
+            y = 30;
         }
-        
-        doc.font('Helvetica-Bold').fontSize(9).fillColor('#111')
-            .text(q.question || '—', left + 3, y + 5, {
+
+        doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#111')
+            .text(q.question || '—', left + 3, y + 1, {
                 width: qW - 6,
                 lineBreak: true,
             });
-            
-        doc.font('Helvetica').fontSize(9).fillColor('#111')
-            .text(displayAnswer, left + qW + 3, y + 5, {
+
+        doc.font('Helvetica').fontSize(8.5).fillColor('#111')
+            .text(displayAnswer, left + qW + 3, y + 1, {
                 width: aW - 6,
                 lineBreak: false,
                 ellipsis: true,
             });
-            
+
         y += needed;
         doc.moveTo(left, y).lineTo(right, y).strokeColor('#dddddd').lineWidth(0.4).stroke();
     });
@@ -641,8 +707,8 @@ function drawMroSection(doc, bundle, startY) {
     const contentWidth = right - left;
 
     const mroFields = [
-        { flag: 'show_final_result', label: 'Final Result :', value: formatFinalResult(report.final_result) },
-        { flag: 'show_test_remark', label: 'Remark :', value: report.test_remark },
+        { flag: 'show_final_result', label: 'Final Result:', value: formatFinalResult(report.final_result) },
+        { flag: 'show_test_remark', label: 'Remark:', value: report.test_remark },
         { flag: 'show_final_result_disposition', label: 'Final Result Disposition:', value: formatFinalResult(report.final_result_disposition) },
         { flag: 'show_final_remark', label: 'Final Remark:', value: report.final_remark },
     ].filter((f) => showFlag(labTest, f.flag));
@@ -650,30 +716,31 @@ function drawMroSection(doc, bundle, startY) {
     if (mroFields.length === 0) return startY;
 
     let y = startY;
-    const mroNeeded = 22 + 36 + (mroFields.length * PAGE.rowH) + 20;
-    if (y + mroNeeded > doc.page.height - 48) {
+    const mroNeeded = 14 + 18 + (mroFields.length * PAGE.rowH) + 8;
+    if (y + mroNeeded > doc.page.height - 30) {
         doc.addPage();
-        y = 40;
+        y = 30;
     }
 
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#111')
+    doc.font('Helvetica-Bold').fontSize(10).fillColor('#111')
         .text('To Be Completed By Medical Review Officer', left, y, {
             width: contentWidth,
             align: 'center',
         });
-    y += 18;
+    y += 12;
 
-    doc.font('Helvetica').fontSize(9).fillColor('#111')
+    doc.font('Helvetica').fontSize(8.5).fillColor('#111')
         .text(
             'I have reviewed the laboratory result for the specimen identified by this form in accordance with applicable federal requirements. My determination / verification is',
             left,
             y,
-            { width: contentWidth, align: 'left', lineGap: 2 }
+            { width: contentWidth, align: 'left', lineGap: 0.5 }
         );
-    y += 32;
+    y += 18;
 
+    const mroLabelW = 132;
     mroFields.forEach((f) => {
-        y = drawBoldInlineField(doc, left, y, f.label, f.value || '—');
+        y = drawLabelValue(doc, left, y, f.label, f.value || '—', mroLabelW, contentWidth - mroLabelW - 10);
     });
 
     return y + PAGE.sectionGap;
@@ -683,12 +750,14 @@ function drawAdditionalDetailsSection(doc, bundle, startY) {
     const { report, labTest } = bundle;
     const left = PAGE.left;
     const right = pageRight(doc);
+    const contentWidth = right - left;
     const mid = pageMid(doc);
-    const labelW = 130;
-    const leftValueW = mid - left - labelW - 10;
-    const rightValueW = right - mid - labelW - 6;
+    const leftLabelW = 132;
+    const rightLabelW = 110;
+    const leftValueW = mid - left - leftLabelW - 10;
+    const rightValueW = right - mid - rightLabelW - 6;
 
-    const rows = [
+    const allRows = [
         { flag: 'show_test_date', label: 'Date of Test:', value: formatUsDate(report.date_of_test) },
         { flag: 'show_fasting', label: 'Fasting:', value: report.fasting === '1' ? 'Yes' : report.fasting === '2' ? 'No' : report.fasting },
         { flag: 'show_requisition_no', label: 'Requisition No:', value: report.requisition_no },
@@ -698,29 +767,39 @@ function drawAdditionalDetailsSection(doc, bundle, startY) {
         { flag: 'show_expire_date', label: 'Exp. Date:', value: formatUsDate(report.expiry_date) },
         { flag: 'show_date_read', label: 'Date Read:', value: formatUsDate(report.date_read) },
         { flag: 'show_mm_indurations', label: 'mm Indurations:', value: report.mm_indurations },
-        { flag: 'show_follow_up', label: 'Follow Up:', value: report.follow_up },
         { flag: 'show_device_identifier', label: 'Device Identifier:', value: report.device_identifier },
+        { flag: 'show_follow_up', label: 'Follow Up:', value: report.follow_up, fullWidth: true },
     ].filter((r) => showFlag(labTest, r.flag));
 
-    if (rows.length === 0) return startY;
+    if (allRows.length === 0) return startY;
 
     let y = startY;
-    if (y + 18 + Math.ceil(rows.length / 2) * PAGE.rowH > doc.page.height - 48) {
+    if (y + 14 + Math.ceil(allRows.length / 2) * PAGE.rowH > doc.page.height - 30) {
         doc.addPage();
-        y = 40;
+        y = 30;
     }
+
+    const gridRows = allRows.filter((r) => !r.fullWidth);
+    const fullRows = allRows.filter((r) => r.fullWidth);
 
     let yL = y;
     let yR = y;
-    rows.forEach((row, index) => {
+    gridRows.forEach((row, index) => {
         if (index % 2 === 0) {
-            yL = drawLabelValue(doc, left, yL, row.label, row.value || '—', labelW, leftValueW);
+            yL = drawLabelValue(doc, left, yL, row.label, row.value || '—', leftLabelW, leftValueW);
         } else {
-            yR = drawLabelValue(doc, mid, yR, row.label, row.value || '—', labelW, rightValueW);
+            yR = drawLabelValue(doc, mid, yR, row.label, row.value || '—', rightLabelW, rightValueW);
         }
     });
 
-    y = Math.max(yL, yR) + 6;
+    y = Math.max(yL, yR);
+
+    // Full-width rows (like Follow Up) get entire row width without cramping
+    fullRows.forEach((row) => {
+        y = drawLabelValue(doc, left, y, row.label, row.value || '—', leftLabelW, contentWidth - leftLabelW - 10);
+    });
+
+    y += 4;
     return drawHRule(doc, left, right, y, '#c0c0c0', 0.5) + PAGE.ruleGap;
 }
 
@@ -730,14 +809,14 @@ function drawReportFooter(doc, bundle, startY) {
     const right = pageRight(doc);
     const contentWidth = right - left;
     let y = startY;
-    const footerNeeded = 88;
+    const footerNeeded = 52;
 
-    if (y + footerNeeded > doc.page.height - 40) {
+    if (y + footerNeeded > doc.page.height - 24) {
         doc.addPage();
-        y = 48;
+        y = 30;
     }
 
-    y = drawHRule(doc, left, right, y, '#c0c0c0', 0.7) + 14;
+    y = drawHRule(doc, left, right, y, '#c0c0c0', 0.7) + 6;
 
     const colW = contentWidth / 3;
     const officerName = b2b?.medical_officer_name || '—';
@@ -747,37 +826,46 @@ function drawReportFooter(doc, bundle, startY) {
     const sigPath = bundle.sigPath;
 
     const valueY = y;
-    const labelY = y + 34;
+    const labelY = y + 22;
 
-    doc.font('Helvetica').fontSize(10).fillColor('#111')
+    doc.font('Helvetica').fontSize(9).fillColor('#111')
         .text(officerName, left, valueY, { width: colW, align: 'center' });
 
     if (sigPath && !sigPath.toLowerCase().endsWith('.webp')) {
         try {
-            doc.image(sigPath, left + colW + (colW - 120) / 2, valueY - 2, { fit: [120, 30] });
+            doc.image(sigPath, left + colW + (colW - 100) / 2, valueY - 2, { fit: [100, 22] });
         } catch (err) {
             console.warn('Could not embed medical officer signature:', err.message);
         }
     }
 
-    doc.font('Helvetica').fontSize(10).fillColor('#111')
+    doc.font('Helvetica').fontSize(9).fillColor('#111')
         .text(reportDate, left + colW * 2, valueY, { width: colW, align: 'center' });
 
-    doc.font('Helvetica-Bold').fontSize(8.5).fillColor('#111')
+    doc.font('Helvetica-Bold').fontSize(8).fillColor('#111')
         .text("Medical Review Officer's Name", left, labelY, { width: colW, align: 'center' });
     doc.text('Signature of Medical Review Officer', left + colW, labelY, { width: colW, align: 'center' });
     doc.text('Date (MM/DD/YY)', left + colW * 2, labelY, { width: colW, align: 'center' });
 
-    y = labelY + 16;
-    y = drawHRule(doc, left, right, y, '#c0c0c0', 0.7) + 10;
+    y = labelY + 11;
+    y = drawHRule(doc, left, right, y, '#c0c0c0', 0.7) + 4;
 
-    doc.font('Helvetica').fontSize(8).fillColor('#111')
-        .text('* Represents laboratory screening and confirmation values', left, y, {
-            width: contentWidth,
-            align: 'left',
-        });
+    const hasCutoffs = bundle.parameters?.some((p) => {
+        const sc = p.screening_cutoff;
+        const cc = p.confirmation_cutoff;
+        return (sc !== null && sc !== undefined && String(sc).trim() !== '' && String(sc).toLowerCase() !== 'null') ||
+               (cc !== null && cc !== undefined && String(cc).trim() !== '' && String(cc).toLowerCase() !== 'null');
+    });
 
-    return y + 10;
+    if (hasCutoffs) {
+        doc.font('Helvetica').fontSize(7.5).fillColor('#111')
+            .text('* Represents laboratory screening and confirmation values', left, y, {
+                width: contentWidth,
+                align: 'left',
+            });
+    }
+
+    return y + 4;
 }
 
 async function generatePlainLabTestReportPdf(bundle) {
@@ -790,7 +878,7 @@ async function generatePlainLabTestReportPdf(bundle) {
 
     return new Promise((resolve, reject) => {
         try {
-            const doc = new PDFDocument({ margin: 40, size: 'LETTER' });
+            const doc = new PDFDocument({ margin: 32, size: 'LETTER' });
             const chunks = [];
             doc.on('data', (c) => chunks.push(c));
             doc.on('end', () => resolve(Buffer.concat(chunks)));
@@ -893,4 +981,5 @@ module.exports = {
     buildLabTestReportPdf,
     buildBirthdatePassword,
     loadLabTestReportBundle,
+    generatePlainLabTestReportPdf,
 };
