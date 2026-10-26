@@ -260,32 +260,47 @@ router.put('/:id', async (req, res) => {
         const { name, driving_license, mobile, email, gender, dob,
                 street1, street2, country_id, state_id, city_id, country, city, state,
                 zipcode, driving_license_state, ssn, status } = req.body;
+
+        const parsedGender = (gender !== undefined && gender !== null && gender !== '') ? parseInt(gender, 10) : null;
+        const formattedDob = dob ? (dob instanceof Date ? dob.toISOString().split('T')[0] : String(dob).split('T')[0]) : null;
+        const encDl = driving_license ? encryptPII(String(driving_license).trim()) : null;
+        const encSsn = ssn ? encryptPII(String(ssn).trim()) : null;
+        const encDob = formattedDob ? encryptPII(formattedDob) : null;
+
+        const fields = [];
+        const values = [];
+        let i = 1;
+
+        if (name !== undefined) { fields.push(`name = $${i++}`); values.push(name ? String(name).trim() : null); }
+        if (driving_license !== undefined) { fields.push(`driving_license = $${i++}`); values.push(encDl); }
+        if (mobile !== undefined) { fields.push(`mobile = $${i++}`); values.push(mobile ? String(mobile).trim() : null); }
+        if (email !== undefined) { fields.push(`email = $${i++}`); values.push(email ? String(email).trim() : null); }
+        if (gender !== undefined) { fields.push(`gender = $${i++}`); values.push(parsedGender); }
+        if (dob !== undefined) { fields.push(`dob = $${i++}`); values.push(encDob); }
+        if (street1 !== undefined) { fields.push(`street1 = $${i++}`); values.push(street1 ? String(street1).trim() : null); }
+        if (street2 !== undefined) { fields.push(`street2 = $${i++}`); values.push(street2 ? String(street2).trim() : null); }
+        if (country_id !== undefined) { fields.push(`country_id = $${i++}`); values.push(country_id ? Number(country_id) : null); }
+        if (state_id !== undefined) { fields.push(`state_id = $${i++}`); values.push(state_id ? Number(state_id) : null); }
+        if (city_id !== undefined) { fields.push(`city_id = $${i++}`); values.push(city_id ? Number(city_id) : null); }
+        if (country !== undefined) { fields.push(`country = $${i++}`); values.push(country ? String(country).trim() : null); }
+        if (state !== undefined) { fields.push(`state = $${i++}`); values.push(state ? String(state).trim() : null); }
+        if (city !== undefined) { fields.push(`city = $${i++}`); values.push(city ? String(city).trim() : null); }
+        if (zipcode !== undefined) { fields.push(`zipcode = $${i++}`); values.push(zipcode ? String(zipcode).trim() : null); }
+        if (driving_license_state !== undefined) { fields.push(`driving_license_state = $${i++}`); values.push(driving_license_state ? String(driving_license_state).trim() : null); }
+        if (ssn !== undefined) { fields.push(`ssn = $${i++}`); values.push(encSsn); }
+        if (status !== undefined) { fields.push(`status = $${i++}`); values.push(status !== null ? Boolean(status) : true); }
+
+        if (fields.length === 0) {
+            const current = await queryOne(`SELECT * FROM patient WHERE id = $1`, [req.params.id]);
+            return resp(res, '200', current ? mapPatient(current) : null);
+        }
+
+        values.push(req.params.id);
         const patient = await queryOne(
-            `UPDATE patient SET
-                name = COALESCE($1, name),
-                driving_license = COALESCE($2, driving_license),
-                mobile = COALESCE($3, mobile),
-                email = COALESCE($4, email),
-                gender = COALESCE($5, gender),
-                dob = COALESCE($6, dob),
-                street1 = COALESCE($7, street1),
-                street2 = COALESCE($8, street2),
-                country_id = COALESCE($9, country_id),
-                state_id = COALESCE($10, state_id),
-                city_id = COALESCE($11, city_id),
-                country = COALESCE($12, country),
-                city = COALESCE($13, city),
-                state = COALESCE($14, state),
-                zipcode = COALESCE($15, zipcode),
-                driving_license_state = COALESCE($16, driving_license_state),
-                ssn = COALESCE($17, ssn),
-                status = COALESCE($18, status)
-             WHERE id = $19 RETURNING *`,
-            [name, driving_license ? encryptPII(driving_license) : null, mobile, email, gender, dob ? encryptPII(dob) : null,
-             street1, street2, country_id || null, state_id || null, city_id || null, country || null,
-             city, state, zipcode, driving_license_state, ssn ? encryptPII(ssn) : null, status,
-             req.params.id]
+            `UPDATE patient SET ${fields.join(', ')} WHERE id = $${i} RETURNING *`,
+            values
         );
+        if (!patient) return resp(res, '404', 'Patient not found');
         return resp(res, '200', mapPatient(patient));
     } catch (err) {
         return resp(res, '500', err.message);
